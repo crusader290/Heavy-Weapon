@@ -24,6 +24,7 @@
 #include <fstream>
 #include <functional>
 #include <sstream>
+#include <unordered_map>
 
 namespace HeavyWeapon {
 
@@ -39,6 +40,10 @@ public:
     static int Respawn(Board& b) { return b.mRespawn; }
     static bool Survival(Board& b) { return b.mSurvival; }
     static double Progress(Board& b) { return b.mLength > 0 ? std::min(1.0, (double)b.mProgress / b.mLength) : 0.0; }
+    static std::vector<std::unique_ptr<Hazard>>& Hazards(Board& b) { return b.mHazards; }
+    // The turret's aim point (mouse cursor / virtual stick cursor) in board coordinates.
+    static double AimX(Board& b) { return b.mMouseX - 320.0; }
+    static double AimY(Board& b) { return b.mMouseY; }
 };
 
 namespace {
@@ -52,6 +57,7 @@ struct Callback {
 
 struct PickupDef {
     std::string id, mod, message, image, sound;
+    int soundId = -1;          // an original sound id instead of a file
     int cols = 0, frame = 0;   // cols 0: the image's own cel layout
     double chance = 1.0;
     int tier = 0;                 // drops from this tier (mission index / survival tier) on
@@ -288,6 +294,11 @@ void DamageCraft(Board& b, Craft& c, double amount) {
 
 // ---- projectiles --------------------------------------------------------------------------
 
+class ModProjectile;
+std::unordered_map<int, ModProjectile*> sProjectiles;   // live projectiles by id
+int sNextProjectileId = 0;
+constexpr double kGroundY = 458.0;
+
 class ModProjectile : public Hazard {
 public:
     ModProjectile(Board& board, const std::string& image, int cols, double x, double y, double vx, double vy)
@@ -295,18 +306,46 @@ public:
         img = ModImage(image, cols);
         mCols = img ? std::max(1, img->cols) : 1;
         hittable = false;   // enemy fire does not collide with it
+        id = ++sNextProjectileId;
+        sProjectiles[id] = this;
     }
-    ~ModProjectile() override { Release(onHit); }
+    ~ModProjectile() override {
+        sProjectiles.erase(id);
+        Release(onHit);
+        Release(onExpire);
+    }
+
+    // Life ran out or it landed with no bounces left.
+    void Expire() {
+        if (dead) return;
+        Remove();
+        if (onExpire.ref != LUA_NOREF) {
+            lua_pushnumber(L, x);
+            lua_pushnumber(L, y);
+            Call(onExpire, 2, 0);
+        }
+    }
 
     void Update() override {
         if (life > 0 && --life == 0) {
-            Remove();
+            Expire();
             return;
         }
         if (homing > 0.0) Steer();
         vy += gravity;
         x += vx;
         y += vy;
+        if (bounces >= 0 && y >= kGroundY && vy > 0.0) {
+            if (bounces == 0) {
+                y = kGroundY;
+                Expire();
+                return;
+            }
+            --bounces;
+            y = kGroundY;
+            vy = -vy * restitution;
+            vx *= 0.9;
+        }
         if (mCols > 1 && anim > 0.0) {
             frame += anim;
             if (frame >= mCols) frame -= mCols;
@@ -315,6 +354,7 @@ public:
             Remove();
             return;
         }
+        if (!collide) return;
         // Collect first: a kill can add craft (debris, parts) to the list.
         std::vector<Craft*> hits;
         for (auto& c : b.Crafts()) {
@@ -344,10 +384,12 @@ public:
         if (glow) Gfx::SetDrawMode(0);
     }
 
-    double gravity = 0.0, homing = 0.0, damage = 1.0, anim = 0.0;
+    double gravity = 0.0, homing = 0.0, damage = 1.0, anim = 0.0, restitution = 0.6;
     int life = 0;
-    bool pierce = false, glow = false, flipLeft = false;
-    Callback onHit;
+    int bounces = -1;            // -1: ignores the ground; n: bounces n times, then expires
+    int id = 0;
+    bool pierce = false, glow = false, flipLeft = false, collide = true;
+    Callback onHit, onExpire;
 
 private:
     void Steer() {
@@ -388,7 +430,10 @@ int L_pickup(lua_State* l) {
     d.cols = (int)FieldNum(l, 1, "cols", 0);
     d.frame = (int)FieldNum(l, 1, "frame", 0);
     d.message = FieldStr(l, 1, "message");
-    d.sound = FieldStr(l, 1, "sound");
+    lua_getfield(l, 1, "sound");
+    if (lua_isinteger(l, -1)) d.soundId = (int)lua_tointeger(l, -1);
+    else if (lua_isstring(l, -1)) d.sound = lua_tostring(l, -1);
+    lua_pop(l, 1);
     d.chance = std::max(0.0, FieldNum(l, 1, "chance", 1.0));
     d.tier = (int)FieldNum(l, 1, "tier", 0);
     d.max = (int)FieldNum(l, 1, "max", -1);
@@ -664,8 +709,92 @@ int L_projectile(lua_State* l) {
     p->glow = FieldBool(l, 1, "glow", false);
     p->flipLeft = FieldBool(l, 1, "flip", false);
     p->onHit = FieldFunc(l, 1, "on_hit");
+    p->onExpire = FieldFunc(l, 1, "on_expire");
+    p->collide = FieldBool(l, 1, "collide", true);
+    lua_getfield(l, 1, "bounces");
+    if (lua_isnumber(l, -1)) p->bounces = std::max(0, (int)lua_tointeger(l, -1));
+    lua_pop(l, 1);
+    p->restitution = FieldNum(l, 1, "restitution", 0.6);
+    const int id = p->id;
     b.AddHazard(std::move(p));
-    return 0;
+    lua_pushinteger(l, id);
+    return 1;
+}
+
+int L_projectile_pos(lua_State* l) {
+    auto it = sProjectiles.find((int)luaL_checkinteger(l, 1));
+    if (it == sProjectiles.end() || it->second->dead) {
+        lua_pushnil(l);
+        return 1;
+    }
+    lua_pushnumber(l, it->second->x);
+    lua_pushnumber(l, it->second->y);
+    lua_pushnumber(l, it->second->vx);
+    lua_pushnumber(l, it->second->vy);
+    return 4;
+}
+
+int L_aim(lua_State* l) {
+    Board& b = NeedBoard(l);
+    lua_pushnumber(l, ModBridge::AimX(b));
+    lua_pushnumber(l, ModBridge::AimY(b));
+    return 2;
+}
+
+// ---- enemy ordnance (bombs, missiles, shells: hittable hazards) ------------------------
+
+Hazard* HazardFromArg(lua_State* l, int idx) {
+    luaL_checktype(l, idx, LUA_TTABLE);
+    lua_getfield(l, idx, "handle");
+    void* p = lua_touserdata(l, -1);
+    lua_pop(l, 1);
+    if (!p || !sBoard) return nullptr;
+    for (auto& h : ModBridge::Hazards(*sBoard)) {
+        if (h.get() == p) return (h->dead || !h->hittable) ? nullptr : h.get();
+    }
+    return nullptr;
+}
+
+int L_hazards(lua_State* l) {
+    Board& b = NeedBoard(l);
+    lua_newtable(l);
+    int n = 0;
+    for (auto& h : ModBridge::Hazards(b)) {
+        if (h->dead || !h->hittable) continue;   // player and mod weapons are not hittable
+        lua_createtable(l, 0, 6);
+        lua_pushnumber(l, h->x); lua_setfield(l, -2, "x");
+        lua_pushnumber(l, h->y); lua_setfield(l, -2, "y");
+        lua_pushnumber(l, h->vx); lua_setfield(l, -2, "vx");
+        lua_pushnumber(l, h->vy); lua_setfield(l, -2, "vy");
+        lua_pushboolean(l, h->behind); lua_setfield(l, -2, "behind");
+        lua_pushlightuserdata(l, h.get()); lua_setfield(l, -2, "handle");
+        lua_rawseti(l, -2, ++n);
+    }
+    return 1;
+}
+
+int L_steer_hazard(lua_State* l) {
+    Hazard* h = HazardFromArg(l, 1);
+    if (h) {
+        h->vx = luaL_checknumber(l, 2);
+        h->vy = luaL_checknumber(l, 3);
+    }
+    lua_pushboolean(l, h != nullptr);
+    return 1;
+}
+
+int L_destroy_hazard(lua_State* l) {
+    Board& b = NeedBoard(l);
+    Hazard* h = HazardFromArg(l, 1);
+    if (h) {
+        if (lua_isnone(l, 2) || lua_toboolean(l, 2)) {
+            b.SpawnExplosion(h->x, h->y, 50, 50, 0.0, 0.0);
+            AudioSystem::PlaySoundId(SND_SMALLEXPLODE, b.Pan(h->x));
+        }
+        h->Remove();
+    }
+    lua_pushboolean(l, h != nullptr);
+    return 1;
 }
 
 int L_charges(lua_State* l) {
@@ -705,7 +834,9 @@ const luaL_Reg kApi[] = {
     { "mission", L_mission }, { "fire", L_fire }, { "megalaser", L_megalaser },
     { "invulnerable", L_invulnerable }, { "enemies", L_enemies }, { "damage", L_damage },
     { "damage_area", L_damage_area }, { "explosion", L_explosion }, { "drop", L_drop },
-    { "projectile", L_projectile }, { "charges", L_charges }, { "give", L_give },
+    { "projectile", L_projectile }, { "projectile_pos", L_projectile_pos }, { "aim", L_aim },
+    { "hazards", L_hazards }, { "steer_hazard", L_steer_hazard }, { "destroy_hazard", L_destroy_hazard },
+    { "charges", L_charges }, { "give", L_give },
     { nullptr, nullptr },
 };
 
@@ -961,7 +1092,8 @@ void OnPickup(int type, double x, double y) {
     PickupDef& p = sPickups[i];
     ++p.collected;
     if (!p.message.empty()) sBoard->AddMessage(p.message, (int)sBoard->TankX(), sBoard->TankY() - 13, true);
-    if (!p.sound.empty()) AudioSystem::PlaySound(p.sound);
+    if (p.soundId >= 0) AudioSystem::PlaySoundId(p.soundId, sBoard->Pan(sBoard->TankX()));
+    else if (!p.sound.empty()) AudioSystem::PlaySound(p.sound);
     else AudioSystem::PlaySoundId(SND_POWERUP, sBoard->Pan(sBoard->TankX()));
     const std::string id = p.id;
     Callback cb = p.onPickup;

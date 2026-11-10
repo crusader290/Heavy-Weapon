@@ -1,8 +1,7 @@
 # Releasing
 
 Releases are published on GitHub as `vX.Y.Z` with two zips, built from the tagged commit.
-Each zip holds the game, `README.txt`, `LICENSES/`, `docs/MODDING.md` and
-`examples/mods/`. Never game data.
+Each zip holds the game, `README.txt`, `LICENSES/` and `docs/MODDING.md`. Never game data.
 
 ## 1. Windows x64
 
@@ -55,10 +54,10 @@ land in `dist/`.
 
 ## 4. Smoke test, then publish
 
-Extract each zip somewhere fresh, copy `examples/mods/PlasmaDemo` into `mods/`, and run a
-mission with `--data <game data>`, checking that it renders, plays music and loads the
-mod. Run the Linux one on a different distro than Debian (e.g. the Fedora container from
-`tools/linux`). Then:
+Extract each zip somewhere fresh and run a mission with `--data <game data>`, checking
+that it renders and plays music. Without `--data` (and no data next to it) it must show
+the "game data not found" error instead of a black window. Run the Linux one on a
+different distro than Debian (e.g. the Fedora container from `tools/linux`). Then:
 
 ```bash
 git tag -a vX.Y.Z -m "Heavy Weapon X.Y.Z" && git push origin vX.Y.Z

@@ -190,11 +190,7 @@ Mods can:
 Scripts run sandboxed (no file or system access). Errors go to `mods.log`, and the title
 screen lists the loaded mods.
 
-- Guide and API reference: [docs/MODDING.md](docs/MODDING.md)
-- Example mod (two pickups, two abilities, a tweak and an event hook):
-  [examples/mods/PlasmaDemo](examples/mods/PlasmaDemo/mod.lua). Copy it to
-  `mods/PlasmaDemo/` and start a mission: **F** fires plasma bolts and **G** calls an
-  airstrike.
+Guide and API reference: [docs/MODDING.md](docs/MODDING.md).
 
 ---
 
@@ -229,10 +225,8 @@ src/loader/     XML data loading
 include/        headers
 3rdparty/       tinyxml2, Lua 5.4
 docs/           MODDING.md (mod guide and API reference)
-examples/mods/  example mod
 tools/windows/  Windows build script
 tools/linux/    Linux container build / run / screenshot script
-tools/mods/     generator for the example mod's sprites and sound
 ```
 
 ---

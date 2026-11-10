@@ -5,8 +5,7 @@ rules), **abilities** (actions bound to a key or gamepad button), custom **proje
 **balance tweaks** to the original power-ups, and can **replace any game file** (sprites,
 sounds, music, level data).
 
-Mods are written in [Lua 5.4](https://www.lua.org/manual/5.4/). A complete example lives
-in [`examples/mods/PlasmaDemo`](../examples/mods/PlasmaDemo/mod.lua).
+Mods are written in [Lua 5.4](https://www.lua.org/manual/5.4/).
 
 ---
 
@@ -19,12 +18,10 @@ executable, or in the working directory):
 Heavy Weapon Deluxe/
 ├── data/  Fonts/  Images/  Music/  Sounds/
 └── mods/
-    ├── PlasmaDemo/
-    │   ├── mod.lua
-    │   ├── Images/plasma.png
-    │   └── Sounds/zap.wav
     └── MyMod/
-        └── mod.lua
+        ├── mod.lua
+        ├── Images/zap.png
+        └── Sounds/zap.wav
 ```
 
 - The first `mods` folder found is used (game data folder from `--data`, then

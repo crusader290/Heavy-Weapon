@@ -7,7 +7,7 @@
       --deps build-release-windows/_deps --openmpt-src <libopenmpt-x.y.z+release>
 
 The zip holds one folder, HeavyWeapon-<version>/, with the game, README.txt,
-LICENSES/ (third-party licenses), docs/MODDING.md and examples/mods/. No game data.
+LICENSES/ (third-party licenses) and docs/MODDING.md. No game data.
 
 Build the binaries first (see docs/RELEASING.md): Windows from the windows-x64 preset
 in Release without HW_DATA_DIR; Linux on an old glibc (Debian 12) with
@@ -68,9 +68,8 @@ def readme(version, platform):
         "",
         "MODS",
         "  Put mod folders in a \"mods\" folder next to your game data. Each needs a",
-        "  mod.lua. Try examples/mods/PlasmaDemo (copy it to mods/PlasmaDemo): F fires",
-        "  plasma bolts, G calls an airstrike. Guide: docs/MODDING.md. Errors are",
-        "  written to mods.log. --no-mods turns mods off.",
+        "  mod.lua. Guide: docs/MODDING.md. Errors are written to mods.log.",
+        "  --no-mods turns mods off.",
         "",
         "COMMAND LINE",
         "  --data <dir>   --scale <n>   --stretch   --buttons <xbox|playstation|auto>",
@@ -176,7 +175,6 @@ def main():
     collect_licenses(os.path.join(root, "LICENSES"), a.platform, deps, a.openmpt_src)
     os.makedirs(os.path.join(root, "docs"))
     shutil.copy2(os.path.join(REPO, "docs", "MODDING.md"), os.path.join(root, "docs"))
-    shutil.copytree(os.path.join(REPO, "examples", "mods"), os.path.join(root, "examples", "mods"))
 
     os.makedirs(a.out, exist_ok=True)
     zpath = os.path.join(a.out, name)

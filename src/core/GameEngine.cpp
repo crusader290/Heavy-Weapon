@@ -158,6 +158,14 @@ GameEngine::~GameEngine() {
 bool GameEngine::Init(SDL_Window* window, const LaunchOptions& opts) {
     mOpts = opts;
     Vfs::Init(opts.dataPath);
+    // Without the user's game files there is nothing to show (only a black window): fail,
+    // so main() explains where the data has to go.
+    if (!Vfs::Exists("data/levels.xml") || !Vfs::Exists("Images/mainmenu.jpg")) {
+        std::cerr << "[GameEngine] Game data not found: data/levels.xml and Images/ from Heavy Weapon Deluxe "
+                     "must be next to the executable, in \"Heavy Weapon Deluxe/\", or given with --data <dir>."
+                  << std::endl;
+        return false;
+    }
     Mods::Init(!opts.noMods);   // before anything loads: mods may override game files
     TextureManager::Init();
     if (!Renderer::Init(window)) {
