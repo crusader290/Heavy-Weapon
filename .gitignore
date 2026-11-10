@@ -10,6 +10,7 @@ references/
 # Build output
 build/
 build-*/
+dist/
 *.a
 *.o
 *.obj
