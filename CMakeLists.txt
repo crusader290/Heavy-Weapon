@@ -16,6 +16,7 @@ set(HW_DATA_DIR "" CACHE PATH "Default game data directory, searched after the u
 set(HW_SDL3_VERSION       "3.4.20" CACHE STRING "SDL3 version to download")
 set(HW_SDL3_IMAGE_VERSION "3.4.8"  CACHE STRING "SDL3_image version to download")
 set(HW_SDL3_MIXER_VERSION "3.2.4"  CACHE STRING "SDL3_mixer version to download")
+set(HW_OPENMPT_VERSION    "0.8.10" CACHE STRING "libopenmpt version to download")
 set(_gh https://github.com/libsdl-org)
 
 set(SOURCES
@@ -80,6 +81,31 @@ if(WIN32)
         ${_sdl3}/lib/x64/*.dll
         ${_sdl3_image}/lib/x64/*.dll ${_sdl3_image}/lib/x64/optional/*.dll
         ${_sdl3_mixer}/lib/x64/*.dll ${_sdl3_mixer}/lib/x64/optional/*.dll)
+
+    # libopenmpt (plays the MO3 music): official prebuilt Windows dev package.
+    set(_mpt ${_deps}/libopenmpt-${HW_OPENMPT_VERSION})
+    if(NOT EXISTS ${_mpt}/inc/libopenmpt/libopenmpt.h)
+        set(_zip ${_deps}/libopenmpt-${HW_OPENMPT_VERSION}-dev.zip)
+        message(STATUS "Downloading libopenmpt ${HW_OPENMPT_VERSION}")
+        file(DOWNLOAD
+             https://lib.openmpt.org/files/libopenmpt/dev/libopenmpt-${HW_OPENMPT_VERSION}+release.dev.windows.vs2022.zip
+             ${_zip} STATUS _st TLS_VERIFY ON)
+        list(GET _st 0 _code)
+        if(NOT _code EQUAL 0)
+            file(REMOVE ${_zip})
+            message(FATAL_ERROR "Failed to download libopenmpt ${HW_OPENMPT_VERSION}: ${_st}")
+        endif()
+        file(ARCHIVE_EXTRACT INPUT ${_zip} DESTINATION ${_mpt})
+        file(REMOVE ${_zip})
+    endif()
+    add_library(hw_openmpt SHARED IMPORTED)
+    set_target_properties(hw_openmpt PROPERTIES
+        IMPORTED_IMPLIB ${_mpt}/lib/amd64/libopenmpt.lib
+        IMPORTED_LOCATION ${_mpt}/bin/amd64/libopenmpt.dll
+        INTERFACE_INCLUDE_DIRECTORIES ${_mpt}/inc
+        INTERFACE_COMPILE_DEFINITIONS LIBOPENMPT_USE_DLL)
+    file(GLOB _mpt_dlls ${_mpt}/bin/amd64/*.dll)
+    list(APPEND _hw_runtime_dlls ${_mpt_dlls})
 else()
     # Linux: system packages when they are new enough, otherwise (or with
     # HW_BUNDLE_SDL=ON) build them from the release sources as static libraries.
@@ -129,6 +155,57 @@ else()
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
         FetchContent_MakeAvailable(SDL3 SDL3_image SDL3_mixer)
     endif()
+
+    # libopenmpt (plays the MO3 music): system package, else built from the release
+    # sources as a static library with its bundled minimp3/stb_vorbis/miniz decoders.
+    option(HW_BUNDLE_OPENMPT "Build libopenmpt from source instead of using the system package" OFF)
+    if(NOT HW_BUNDLE_OPENMPT)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(LIBOPENMPT QUIET IMPORTED_TARGET libopenmpt>=0.6)
+        endif()
+        if(LIBOPENMPT_FOUND)
+            add_library(hw_openmpt INTERFACE)
+            target_link_libraries(hw_openmpt INTERFACE PkgConfig::LIBOPENMPT)
+        else()
+            message(STATUS "System libopenmpt not found: building it from source")
+            set(HW_BUNDLE_OPENMPT ON)
+        endif()
+    endif()
+    if(HW_BUNDLE_OPENMPT)
+        set(_m ${CMAKE_BINARY_DIR}/_deps/libopenmpt-${HW_OPENMPT_VERSION}+release)
+        if(NOT EXISTS ${_m}/libopenmpt/libopenmpt.h)
+            set(_tgz ${CMAKE_BINARY_DIR}/_deps/libopenmpt-${HW_OPENMPT_VERSION}.tar.gz)
+            message(STATUS "Downloading libopenmpt ${HW_OPENMPT_VERSION} sources")
+            file(DOWNLOAD
+                 https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-${HW_OPENMPT_VERSION}+release.makefile.tar.gz
+                 ${_tgz} STATUS _st TLS_VERIFY ON)
+            list(GET _st 0 _code)
+            if(NOT _code EQUAL 0)
+                file(REMOVE ${_tgz})
+                message(FATAL_ERROR "Failed to download libopenmpt ${HW_OPENMPT_VERSION}: ${_st}")
+            endif()
+            file(ARCHIVE_EXTRACT INPUT ${_tgz} DESTINATION ${CMAKE_BINARY_DIR}/_deps)
+            file(REMOVE ${_tgz})
+        endif()
+        file(GLOB _mpt_src
+            ${_m}/src/openmpt/all/*.cpp ${_m}/src/openmpt/base/*.cpp
+            ${_m}/src/openmpt/logging/*.cpp ${_m}/src/openmpt/random/*.cpp
+            ${_m}/common/*.cpp
+            ${_m}/src/openmpt/fileformat_base/*.cpp ${_m}/src/openmpt/soundbase/*.cpp
+            ${_m}/src/openmpt/soundfile_data/*.cpp
+            ${_m}/soundlib/*.cpp ${_m}/soundlib/plugins/*.cpp ${_m}/soundlib/plugins/dmo/*.cpp
+            ${_m}/sounddsp/*.cpp ${_m}/libopenmpt/*.cpp)
+        add_library(hw_openmpt STATIC ${_mpt_src}
+            ${_m}/include/minimp3/minimp3.c ${_m}/include/stb_vorbis/stb_vorbis.c ${_m}/include/miniz/miniz.c)
+        target_compile_features(hw_openmpt PRIVATE cxx_std_17)
+        target_compile_definitions(hw_openmpt PRIVATE
+            LIBOPENMPT_BUILD MPT_WITH_MINIZ MPT_WITH_MINIMP3
+            MPT_WITH_STBVORBIS STB_VORBIS_NO_PULLDATA_API STB_VORBIS_NO_STDIO)
+        target_include_directories(hw_openmpt PRIVATE ${_m} ${_m}/src ${_m}/common ${_m}/include)
+        target_include_directories(hw_openmpt INTERFACE ${_m})
+        set_target_properties(hw_openmpt PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -140,7 +217,7 @@ target_include_directories(heavyweapon PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tinyxml2)
 target_link_libraries(heavyweapon PRIVATE
-    SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer SDL3::SDL3 OpenGL::GL)
+    SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer SDL3::SDL3 hw_openmpt OpenGL::GL)
 if(HW_PERF)
     target_compile_definitions(heavyweapon PRIVATE HW_PERF)
 endif()

@@ -6,10 +6,47 @@ State of the project as of **2026-11-10**, for whoever (human or agent) picks it
 ## Where things stand
 
 The game is a working native desktop port for **Windows x64** (MSVC) and **Linux x64**
-(GCC), on **SDL3 3.4.20 / SDL3_image 3.4.8 / SDL3_mixer 3.2.4**. The PS Vita target it came
+(GCC), on **SDL3 3.4.20 / SDL3_image 3.4.8 / SDL3_mixer 3.2.4** and **libopenmpt 0.8.10**.
+The full soundtrack and the ambient scenery animations work. The PS Vita target it came
 from has been removed completely: code paths, LiveArea assets, VitaSDK build and docs.
 
-### Done in this round
+### Latest round: music and scenery animations
+
+Both were mapped from the original exe (see "Reading the original executable" in
+`CLAUDE.md`), not guessed.
+
+1. **MO3 music.** libopenmpt decodes `AtomicTank.mo3`: on Windows, the official dev package
+   is downloaded like SDL3; on Linux, the system package is used, with a static from-source
+   fallback (`HW_BUNDLE_OPENMPT`). The exe's music table gives six songs. 0 is
+   `LoveTheme.ogg`; 1-5 are MO3 sections starting at orders 0/42/59/73/79, and each loops
+   on its own. Cues, as in the original:
+
+   | When | Call | Song |
+   | :-- | :-- | :-- |
+   | Startup (title) | PlayMusic, once | 0 LoveTheme |
+   | Title (after LoveTheme), map, armory | `if (!IsPlaying(3)) { FadeOutAll; FadeIn(3) }` | 3 menus |
+   | Mission start | FadeOutAll; FadeIn(1) | 1 missions |
+   | Boss warning starts | FadeOut(1) | |
+   | Boss warning ends (5 x 127 ticks) | PlayMusic(2) | 2 boss |
+   | Level complete | PlayMusic(4); FadeOut(2) | 4 debriefing |
+   | Last tank destroyed | FadeOutAll; FadeIn(5) | 5 game over |
+
+   Fades: in 5 s, out 2.5 s, matching the original's per-update steps of 0.002 / 0.004.
+2. **Boss warning** (0x40e800), which the port lacked: siren cycles, the "danger" voice, and
+   the red screen pulse, then the boss music. Nukes are refused while it runs, as in the
+   original.
+3. **Ambient animations** (`kDecorativeAnims` now on), reimplemented from 0x419eb0 (spawn),
+   0x418f50 (update), 0x410c20 (draw) and 0x41a1d8 (nuke):
+   - one live anim per plane, spawned at random, with `rare` ones 20x rarer
+   - background anims are pinned to their spot on the 960-pixel background image
+   - looping and ping-pong animation, with per-frame `<Delay>` speeds
+   - nukes switch on-screen anims to their nuked frame
+4. **Region fix.** `Anims.xml` is per region, but the port indexed it by mission, so missions
+   10-19 showed the wrong scenery or none. Survival now uses its own backdrop
+   (`survival_*`) and its own anims (posters, satellite dishes); before, it borrowed the
+   mission's backdrop.
+
+### Earlier round
 
 1. **Windows x64 target.** MSVC + Ninja via `CMakePresets.json` (`windows-x64`) and
    `tools/windows/build.cmd`. SDL3 VC packages are downloaded at configure time and their
@@ -47,6 +84,10 @@ from has been removed completely: code paths, LiveArea assets, VitaSDK build and
 | Linux run under Xvfb: title, mission 1 frames | Correct, matches Windows |
 | Linux audio (disk driver capture) | Real PCM output |
 | Linux bundled SDL3 fallback (Fedora 44 without SDL3 packages) | Auto-falls back, builds SDL3 statically, runs; frame matches, audio non-silent |
+| MO3 cues (Windows; Linux with system and with bundled libopenmpt) | Logged song order correct: menu 3; mission 1, then boss 2 after the warning |
+| Music output (disk driver capture) | Non-silent; the fade-in ramps up over the first seconds |
+| Boss warning red pulse | Visible at the start of each siren cycle |
+| Ambient anims (Frigistan, Petrovakia, Dictastroika, survival) | Spawn/scroll/despawn logged; igloo, cow, oil cans, waste barrel, poster and dish drawn in place |
 
 ### Not verified
 
@@ -56,16 +97,24 @@ from has been removed completely: code paths, LiveArea assets, VitaSDK build and
 - Hearing the audio with your own ears: it was checked as non-silent PCM, and the
   relative loudness/panning was reasoned from code, not listened to.
 - Interactive play on a Linux desktop (only headless Xvfb + software GL).
+- **Listening to the music**: cue order and non-silence were checked, not how it sounds.
+  The −5 dB module gain was set from measured levels (it keeps peaks near full scale and
+  loudness level with LoveTheme). The debriefing and game-over cues were checked in code
+  only, not in a run.
+- The nuked anim frames (logic only, no screenshot taken after a nuke).
 - The Debian/Ubuntu package list in the README for the bundled build: the Ubuntu 24.04
   test container never got past `apt-get update` (mirror unreachable from the dev box).
   The fallback itself was verified on Fedora.
 
 ## Open items / ideas
 
-- **In-mission music:** `Music/AtomicTank.mo3` (MO3 = MP3/OGG-compressed tracker module)
-  isn't decodable by libxmp/SDL3_mixer, so it's skipped and missions are silent. Options:
-  convert to OGG offline (the user's own copy) and prefer `AtomicTank.ogg` if present,
-  or add an MO3 decoder.
+- **Boss warning visuals:** only the red pulse is drawn. The original (0x40e920) also
+  draws six animated hazard stripes, a per-mission boss picture (table at 0x52aef8) and
+  typewriter briefing text ("ENCOUNTERED: ..." strings near 0x52b05c).
+- **Intro / story screens:** `intro.swf`, `middle.swf` and `final.swf` aren't implemented.
+  The original also plays song 5 under the story cutscenes.
+- **Detail setting:** the original skips background-plane anims when `app+0xb28` is
+  non-zero (likely a low-detail option); the port always draws them.
 - **Heroes** menu entry plays a "denied" sound. It isn't implemented.
 - **Warnings:** `GameEngine.cpp` C4244 (int→float argument around the mission map) and
   `TextureManager.cpp` unused variable `n`. Both predate this work.

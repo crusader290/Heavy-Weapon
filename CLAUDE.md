@@ -6,7 +6,8 @@ the current state of the work and open items.
 ## What this is
 
 A native C++17 source port of PopCap's *Heavy Weapon Deluxe* for **Windows x64** and
-**Linux x64**, on **SDL3 + SDL3_image + SDL3_mixer** and fixed-function (legacy) OpenGL.
+**Linux x64**, on **SDL3 + SDL3_image + SDL3_mixer**, **libopenmpt** (the MO3 music) and
+fixed-function (legacy) OpenGL.
 It started as a PS Vita port. All Vita code, assets and build targets have been removed;
 don't reintroduce them.
 
@@ -52,7 +53,7 @@ docker run --rm -v "${PWD}:/src" -w /src heavyweapon-linux bash -c "cmake --pres
 ```
 
 CMake options: `HW_DATA_DIR` (default data dir), `HW_PERF` (perf.log profiler),
-`HW_BUNDLE_SDL` (Linux), `HW_SDL3_VERSION` / `HW_SDL3_IMAGE_VERSION` / `HW_SDL3_MIXER_VERSION`.
+`HW_BUNDLE_SDL` / `HW_BUNDLE_OPENMPT` (Linux), `HW_OPENMPT_VERSION`, `HW_SDL3_VERSION` / `HW_SDL3_IMAGE_VERSION` / `HW_SDL3_MIXER_VERSION`.
 
 ## Verifying changes
 
@@ -83,7 +84,7 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
 | `src/game/Board.cpp` | Gameplay: tank movement/firing, spawns, collisions, scoring |
 | `src/game/*.cpp` | Crafts, Hazards, Supplies, Weapons, Bosses, Gfx (effects) |
 | `src/platform/InputManager.cpp` | SDL3 events, keyboard/mouse/gamepad/touch → `InputState` |
-| `src/platform/AudioSystem.cpp` | SDL3_mixer: 32-track pool emulating SDL2_mixer channels, music track |
+| `src/platform/AudioSystem.cpp` | SDL3_mixer: 32-track SFX pool emulating SDL2_mixer channels; songs (one track + one libopenmpt instance each) |
 | `src/platform/Vfs.cpp` | Case-insensitive data lookup over search paths (memoised) |
 | `src/render/` | GL renderer (640×480 FBO scaled to window), textures + PopCap alpha masks, fonts, parallax |
 | `src/loader/XmlLoader.cpp` | Parses the game's XML (levels, waves, craft, bosses) via tinyxml2 |
@@ -106,7 +107,18 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
 - **Bundled SDL3 (Linux):** SDL3_image is configured to decode PNG with stb, not libpng.
   With static builds, Fedora's zlib CMake package points at a missing `libz.a` and breaks
   configure. Keep `SDLIMAGE_PNG_LIBPNG OFF`.
-- `AtomicTank.mo3` can't be decoded and is skipped on purpose.
+- **Music cues** follow the original's `MusicInterface` calls (see `SongId` in
+  `AudioSystem.h`): song ids index the exe's music table (VA 0x5274c0); songs 1-5 are order
+  offsets 0/42/59/73/79 into `AtomicTank.mo3`, and each section loops by itself. Each song
+  has its own libopenmpt module and track, because the original cross-fades two of them
+  (`FadeOutAll` then `FadeIn`). Module audio is rendered on the mixer thread through an
+  `SDL_AudioStream` callback; reposition it only under `SDL_LockAudioStream`.
+- **Ambient anims** (`Board::SpawnAnims/UpdateAnims/DrawAnim`, 0x419eb0/0x418f50/0x410c20):
+  one per plane slot, spawned at random, drawn from the **top-left** (the XML comment says
+  centre; the exe doesn't). `Anims.xml` is per **region**, not per mission:
+  `region = survival ? 10 : mission == 18 ? 9 : mission % 9` (0x4015f0).
+- The boss warning (`Board::UpdateBossWarning`, 0x40e800) is what starts the boss music.
+  Nukes are refused while it runs.
 - The in-game help screen (`GameEngine::RenderHelp`) mirrors the bindings in
   `InputManager.cpp`. Update both together, and the README controls table too.
 
@@ -114,3 +126,19 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
 
 - Remote: `https://github.com/crusader290/Heavy-Weapon`, branch `main`.
 - Commit as the repo-local identity that is already configured (GitHub noreply address).
+
+## Reading the original executable
+
+When behaviour is unclear, check the original. On the dev machine the user's copy is
+`H:\Games\Heavy Weapon\Heavy Weapon Deluxe\HeavyWeapon.exe` (32-bit, unpacked). MSYS2's
+binutils disassemble it locally with no downloads:
+
+```bash
+/c/msys64/ucrt64/bin/objdump.exe -d --no-show-raw-insn -M intel HeavyWeapon.exe > hw.asm
+/c/msys64/ucrt64/bin/objdump.exe -d -M intel --start-address=0x4015f0 --stop-address=0x401640 HeavyWeapon.exe
+```
+
+`.rdata` maps VA 0x527000 to file offset 0x127000. Useful anchors: the board is `this` in
+0x41b860 (Update), 0x419e30 (UpdateF) and 0x415530 (Draw); `board+0x5c` is the app,
+`app+0x330` the music interface, and app vtable slot `+0xb8` is PlaySample(id, pan). Keep
+disassembly output in the scratchpad, never in the repo.

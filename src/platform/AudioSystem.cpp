@@ -1,6 +1,8 @@
 #include "AudioSystem.h"
 #include "Vfs.h"
 #include <SDL3_mixer/SDL_mixer.h>
+#include <libopenmpt/libopenmpt.h>
+#include <cstdio>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -113,14 +115,12 @@ static const SoundMeta sSoundMetaTable[] = {
 
 MIX_Mixer* AudioSystem::sMixer = nullptr;
 MIX_Track* AudioSystem::sTracks[AudioSystem::kNumTracks] = {};
-MIX_Track* AudioSystem::sMusicTrack = nullptr;
 std::unordered_map<std::string, MIX_Audio*> AudioSystem::sSounds;
 std::unordered_set<std::string> AudioSystem::sMissingSounds;
-MIX_Audio* AudioSystem::sCurrentMusic = nullptr;
 int AudioSystem::sMusicVolume = 100;
 bool AudioSystem::sMusicEnabled = true;
-std::string AudioSystem::sMusicRequest;
-bool AudioSystem::sMusicRequestLoop = true;
+int AudioSystem::sCurrentSong = -1;
+bool AudioSystem::sCurrentSongNoLoop = false;
 int AudioSystem::sSfxVolume = 100;
 int AudioSystem::sEngineChannel = -1;
 SDL_Mutex* AudioSystem::sSoundMutex = nullptr;
@@ -140,6 +140,62 @@ struct SoundLock {
 float SfxGain(int sfxVolume, float base) {
     return (sfxVolume / 128.0f) * std::clamp((int)(sfxVolume * base), 0, 128) / 128.0f;
 }
+
+// ---- Music --------------------------------------------------------------------------
+// The original's music table (VA 0x5274c0). Song ids index it; LoadMusic(i, "music\\" +
+// file) loads each entry as its own BASS channel, so two sections of the MO3 can play
+// (cross-fade) at once. The same here: one track and one libopenmpt instance per song.
+struct SongDef { const char* file; int order; };
+constexpr SongDef kSongs[SONG_COUNT] = {
+    { "Music/LoveTheme.ogg", -1 },
+    { "Music/AtomicTank.mo3", 0 },
+    { "Music/AtomicTank.mo3", 42 },
+    { "Music/AtomicTank.mo3", 59 },
+    { "Music/AtomicTank.mo3", 73 },
+    { "Music/AtomicTank.mo3", 79 },
+};
+// MusicInterface fades step the volume once per 100 Hz update: FadeIn 0.002 (5 s),
+// FadeOut/FadeOutAll 0.004 (2.5 s).
+constexpr Sint64 kFadeInMs = 5000;
+constexpr Sint64 kFadeOutMs = 2500;
+// libopenmpt renders this 22-channel module hot (peaks ~2.3 at 0 dB); -5 dB keeps it
+// near full scale and level with LoveTheme.ogg.
+constexpr int kModuleGainMillibel = -500;
+constexpr int kModuleRate = 48000;
+
+struct SongState {
+    MIX_Track* track = nullptr;
+    MIX_Audio* audio = nullptr;          // LoveTheme.ogg, streamed from disk
+    openmpt_module* mod = nullptr;       // AtomicTank.mo3 sections
+    SDL_AudioStream* stream = nullptr;   // fed by RenderModule on the mixer thread
+    bool loadTried = false;
+};
+SongState sSongs[SONG_COUNT];
+
+// SDL_AudioStream get-callback: renders the module on demand. Runs on the audio thread
+// with the stream locked; StartSong locks the same stream to reposition the module.
+void SDLCALL RenderModule(void* user, SDL_AudioStream* stream, int additional, int /*total*/) {
+    auto* mod = static_cast<openmpt_module*>(user);
+    float buf[2 * 1024];
+    while (additional > 0) {
+        size_t frames = (size_t)std::min(additional / 8 + 1, 1024);   // 8 bytes per frame
+        size_t got = openmpt_module_read_interleaved_float_stereo(mod, kModuleRate, frames, buf);
+        if (got == 0) break;   // a one-shot section ended
+        SDL_PutAudioStreamData(stream, buf, (int)(got * 8));
+        additional -= (int)(got * 8);
+    }
+}
+
+std::vector<char> ReadWholeFile(const std::string& path) {
+    std::vector<char> data;
+    if (FILE* f = fopen(path.c_str(), "rb")) {
+        char chunk[65536];
+        size_t n;
+        while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0) data.insert(data.end(), chunk, chunk + n);
+        fclose(f);
+    }
+    return data;
+}
 }
 
 void AudioSystem::Init() {
@@ -155,7 +211,7 @@ void AudioSystem::Init() {
         return;
     }
     for (MIX_Track*& t : sTracks) t = MIX_CreateTrack(sMixer);
-    sMusicTrack = MIX_CreateTrack(sMixer);
+    for (SongState& s : sSongs) s.track = MIX_CreateTrack(sMixer);
 }
 
 void AudioSystem::Shutdown() {
@@ -169,11 +225,16 @@ void AudioSystem::Shutdown() {
     sSounds.clear();
     sMissingSounds.clear();
     if (sMixer) {
-        MIX_DestroyMixer(sMixer);   // also destroys its tracks
+        MIX_DestroyMixer(sMixer);   // also destroys its tracks; no more stream callbacks
         sMixer = nullptr;
         for (MIX_Track*& t : sTracks) t = nullptr;
-        sMusicTrack = nullptr;
         MIX_Quit();
+    }
+    for (SongState& s : sSongs) {
+        if (s.stream) SDL_DestroyAudioStream(s.stream);
+        if (s.mod) openmpt_module_destroy(s.mod);
+        if (s.audio) MIX_DestroyAudio(s.audio);
+        s = SongState();
     }
 }
 
@@ -315,6 +376,8 @@ void AudioSystem::PreloadAllSounds(const std::function<void(int, int)>& progress
         sPreloadDone = ++done;
         if (progress) progress(done, total);
     }
+    // Music too, so the first song of each kind does not hitch (the MO3 takes ~45 ms per song).
+    for (int i = 0; i < SONG_COUNT; ++i) LoadSong(i);
 }
 
 void AudioSystem::StartPreloadThread() {
@@ -364,80 +427,133 @@ void AudioSystem::UpdateEngineSound(bool moving) {
     }
 }
 
+// Loads a song's data once (thread-safe: the preload worker loads them all at boot).
+bool AudioSystem::LoadSong(int song) {
+    if (song < 0 || song >= SONG_COUNT || !sMixer) return false;
+    SoundLock lock(sSoundMutex);
+    SongState& s = sSongs[song];
+    if (s.loadTried) return s.audio || s.mod;
+    s.loadTried = true;
+
+    const SongDef& def = kSongs[song];
+    std::string path = Vfs::Resolve(def.file);
+    if (!Vfs::Exists(path)) {
+        std::cerr << "[AudioSystem] Music not found: " << def.file << std::endl;
+        return false;
+    }
+    if (def.order < 0) {
+        s.audio = MIX_LoadAudio(sMixer, path.c_str(), false);   // streamed
+        if (!s.audio) {
+            std::cerr << "[AudioSystem] Failed to load music " << def.file << ": " << SDL_GetError() << std::endl;
+            return false;
+        }
+        MIX_SetTrackAudio(s.track, s.audio);
+        return true;
+    }
+
+    std::vector<char> data = ReadWholeFile(path);
+    int error = 0;
+    s.mod = openmpt_module_create_from_memory2(data.data(), data.size(), openmpt_log_func_silent, nullptr,
+                                               openmpt_error_func_ignore, nullptr, &error, nullptr, nullptr);
+    if (!s.mod) {
+        std::cerr << "[AudioSystem] libopenmpt cannot load " << def.file << " (error " << error << ")" << std::endl;
+        return false;
+    }
+    openmpt_module_set_render_param(s.mod, OPENMPT_MODULE_RENDER_MASTERGAIN_MILLIBEL, kModuleGainMillibel);
+    openmpt_module_set_repeat_count(s.mod, -1);
+    const SDL_AudioSpec spec = { SDL_AUDIO_F32, 2, kModuleRate };
+    s.stream = SDL_CreateAudioStream(&spec, &spec);
+    if (!s.stream) {
+        openmpt_module_destroy(s.mod);
+        s.mod = nullptr;
+        return false;
+    }
+    SDL_SetAudioStreamGetCallback(s.stream, RenderModule, s.mod);
+    MIX_SetTrackAudioStream(s.track, s.stream);
+    return true;
+}
+
+void AudioSystem::StartSong(int song, bool fade, bool noLoop) {
+    if (song < 0 || song >= SONG_COUNT) return;
+    sCurrentSong = song;
+    sCurrentSongNoLoop = noLoop;
+    if (!sMusicEnabled || !LoadSong(song)) return;   // remembered for SetMusicEnabled(true)
+    std::cout << "[AudioSystem] Song " << song << (fade ? " fades in" : " starts")
+              << (kSongs[song].order >= 0 ? " at order " + std::to_string(kSongs[song].order) : std::string())
+              << std::endl;
+
+    SongState& s = sSongs[song];
+    if (s.mod) {
+        SDL_LockAudioStream(s.stream);
+        openmpt_module_set_repeat_count(s.mod, noLoop ? 0 : -1);
+        openmpt_module_set_position_order_row(s.mod, kSongs[song].order, 0);
+        SDL_ClearAudioStream(s.stream);
+        SDL_UnlockAudioStream(s.stream);
+    }
+    MIX_SetTrackGain(s.track, sMusicVolume / 128.0f);
+    SDL_PropertiesID props = SDL_CreateProperties();
+    // An OGG loops by seeking; a module stream loops inside libopenmpt (repeat count).
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, (s.audio && !noLoop) ? -1 : 0);
+    if (fade) SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, kFadeInMs);
+    MIX_PlayTrack(s.track, props);
+    SDL_DestroyProperties(props);
+}
+
+void AudioSystem::PlaySong(int song, bool noLoop) { StartSong(song, false, noLoop); }
+void AudioSystem::FadeInSong(int song, bool noLoop) { StartSong(song, true, noLoop); }
+
+void AudioSystem::FadeOutSong(int song) {
+    if (song < 0 || song >= SONG_COUNT) return;
+    if (sCurrentSong == song) sCurrentSong = -1;
+    MIX_Track* t = sSongs[song].track;
+    if (t && MIX_TrackPlaying(t)) MIX_StopTrack(t, MIX_TrackMSToFrames(t, kFadeOutMs));
+}
+
+void AudioSystem::FadeOutAllSongs() {
+    for (int i = 0; i < SONG_COUNT; ++i) FadeOutSong(i);
+    sCurrentSong = -1;
+}
+
+bool AudioSystem::IsSongPlaying(int song) {
+    if (song < 0 || song >= SONG_COUNT || sCurrentSong != song) return false;
+    if (!sMusicEnabled || !sMixer) return true;
+    MIX_Track* t = sSongs[song].track;
+    return t && (MIX_TrackPlaying(t) || MIX_TrackPaused(t));
+}
+
+void AudioSystem::StopMusic() {
+    for (SongState& s : sSongs) {
+        if (s.track) MIX_StopTrack(s.track, 0);
+    }
+}
+
 void AudioSystem::SetMusicEnabled(bool on) {
     if (on == sMusicEnabled) return;
     sMusicEnabled = on;
     if (!on) {
         StopMusic();
-    } else if (!sMusicRequest.empty()) {
-        PlayMusic(sMusicRequest, sMusicRequestLoop);
-    }
-}
-
-void AudioSystem::PlayMusic(const std::string& path, bool loop) {
-    StopMusic();
-    sMusicRequest = path;
-    sMusicRequestLoop = loop;
-    if (!sMusicEnabled) return;   // nothing is loaded while music is off
-
-    // MO3 (tracker module with compressed samples) cannot be decoded by this build; trying
-    // only wasted load time. Skip it.
-    if (path.size() >= 4) {
-        std::string ext = path.substr(path.size() - 4);
-        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-        if (ext == ".mo3") {
-            static bool sLogged = false;
-            if (!sLogged) {
-                sLogged = true;
-                std::cerr << "[AudioSystem] Skipping unsupported .mo3 music: " << path << std::endl;
-            }
-            return;
-        }
-    }
-
-    std::string resolved = Vfs::Resolve(path);
-    if (!Vfs::Exists(resolved)) {
-        std::cerr << "[AudioSystem] Music not found: " << path << std::endl;
-        return;
-    }
-
-    if (!sMixer || !sMusicTrack) return;
-    // Streamed rather than predecoded: music is long and only one track plays at a time.
-    sCurrentMusic = MIX_LoadAudio(sMixer, resolved.c_str(), false);
-    if (sCurrentMusic) {
-        MIX_SetTrackAudio(sMusicTrack, sCurrentMusic);
-        MIX_SetTrackGain(sMusicTrack, sMusicVolume / 128.0f);
-        SDL_PropertiesID props = SDL_CreateProperties();
-        SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
-        MIX_PlayTrack(sMusicTrack, props);
-        SDL_DestroyProperties(props);
-    } else {
-        std::cerr << "[AudioSystem] Failed to load music: " << SDL_GetError() << std::endl;
-    }
-}
-
-void AudioSystem::StopMusic() {
-    if (sCurrentMusic) {
-        if (sMusicTrack) {
-            MIX_StopTrack(sMusicTrack, 0);
-            MIX_SetTrackAudio(sMusicTrack, nullptr);
-        }
-        MIX_DestroyAudio(sCurrentMusic);
-        sCurrentMusic = nullptr;
+    } else if (sCurrentSong >= 0) {
+        StartSong(sCurrentSong, false, sCurrentSongNoLoop);
     }
 }
 
 void AudioSystem::PauseMusic() {
-    if (sMusicTrack) MIX_PauseTrack(sMusicTrack);
+    for (SongState& s : sSongs) {
+        if (s.track && MIX_TrackPlaying(s.track)) MIX_PauseTrack(s.track);
+    }
 }
 
 void AudioSystem::ResumeMusic() {
-    if (sMusicTrack) MIX_ResumeTrack(sMusicTrack);
+    for (SongState& s : sSongs) {
+        if (s.track && MIX_TrackPaused(s.track)) MIX_ResumeTrack(s.track);
+    }
 }
 
 void AudioSystem::SetMusicVolume(int volume) {
     sMusicVolume = std::clamp(volume, 0, 128);
-    if (sMusicTrack) MIX_SetTrackGain(sMusicTrack, sMusicVolume / 128.0f);
+    for (SongState& s : sSongs) {
+        if (s.track) MIX_SetTrackGain(s.track, sMusicVolume / 128.0f);
+    }
 }
 
 void AudioSystem::SetSfxVolume(int volume) {

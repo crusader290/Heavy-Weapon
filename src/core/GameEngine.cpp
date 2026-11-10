@@ -182,9 +182,9 @@ bool GameEngine::Init(SDL_Window* window, const LaunchOptions& opts) {
         mState = STATE_ARMORY;
     }
 
-    if (mState != STATE_PLAYING) {
-        AudioSystem::PlayMusic("Music/LoveTheme.ogg");
-    }
+    // The original's intro screen plays LoveTheme once; the menus then fade in their own
+    // section of AtomicTank.mo3 (UpdateMenuMusic).
+    if (mState == STATE_TITLE) AudioSystem::PlaySong(SONG_LOVETHEME, true);
     return true;
 }
 
@@ -247,6 +247,30 @@ void GameEngine::Update(float dt) {
         case STATE_OPTIONS:        UpdateOptions(); break;
         case STATE_HELP:           UpdateHelp(); break;
         default: break;
+    }
+    UpdateMenuMusic();
+}
+
+// The original's main menu, map and armory each do `if (!IsPlaying(3)) { FadeOutAll();
+// FadeIn(3, 59); }` (0x425e20, 0x410690, 0x40f190), so the menu section keeps playing
+// across them. The title (and its options/help pages) first lets LoveTheme play out.
+void GameEngine::UpdateMenuMusic() {
+    switch (mState) {
+        case STATE_TITLE:
+        case STATE_OPTIONS:
+        case STATE_HELP:
+            if (AudioSystem::IsSongPlaying(SONG_LOVETHEME)) return;
+            [[fallthrough]];
+        case STATE_MISSION_SELECT:
+        case STATE_ARMORY:
+        case STATE_VICTORY:
+            if (!AudioSystem::IsSongPlaying(SONG_MENU)) {
+                AudioSystem::FadeOutAllSongs();
+                AudioSystem::FadeInSong(SONG_MENU);
+            }
+            break;
+        default:
+            break;
     }
 }
 
@@ -407,17 +431,20 @@ void GameEngine::StartLevel(int levelIndex, bool survival) {
     PERF_BEGIN(perfTotal);
     PERF_BEGIN(perfLap);
     mCurrentLevelIndex = levelIndex;
-    mApp.mission = survival ? 0 : levelIndex;   // survival borrows levelIndex's backdrop only
+    mApp.mission = survival ? 0 : levelIndex;   // survival runs as mission 0; its backdrop is its own (below)
     mSurvivalMode = survival;
     mApp.lives = survival ? 1 : 3;   // three tanks per mission (0x403e20); survival gives a single one
     mTickAccum = 0.0f;
     mLevelEndTimer = 0;
 
     const LevelDef* level = (levelIndex < (int)mLevels.size()) ? &mLevels[levelIndex] : nullptr;
-    std::string theme = level ? level->bgTheme : "antagonistan";
+    // Region of the mission (0x4015f0): the nine regions repeat, mission 19 is Red Star HQ
+    // and survival has its own backdrop; Anims.xml has one entry per region.
+    const int region = survival ? 10 : (levelIndex == 18 ? 9 : levelIndex % 9);
+    std::string theme = survival ? "survival" : (level ? level->bgTheme : "antagonistan");
     PreloadAssetsBehindFrame("Images/Backgrounds/" + theme + "_sky");   // no-op after boot
     std::vector<AnimDef> anims;
-    if (levelIndex < (int)mLevelAnims.size()) anims = mLevelAnims[levelIndex];
+    if (region < (int)mLevelAnims.size()) anims = mLevelAnims[region];
     WorldRenderer::SetTheme(theme, anims);
     PERF_LAP(perfLap, "StartLevel SetTheme");
     if (!survival) TextureManager::PreloadFolder(BossSpriteFolder(levelIndex));   // this mission's boss, not all of them
@@ -432,8 +459,10 @@ void GameEngine::StartLevel(int levelIndex, bool survival) {
     mBoard->SetBossDefs(&mBossDefs);
     PERF_LAP(perfLap, "StartLevel Board ctor");
 
-    AudioSystem::PlayMusic("Music/AtomicTank.mo3");
-    PERF_LAP(perfLap, "StartLevel PlayMusic");
+    // 0x4184b0: FadeOutAll, then FadeIn(1, 0): the mission section.
+    AudioSystem::FadeOutAllSongs();
+    AudioSystem::FadeInSong(SONG_MISSION);
+    PERF_LAP(perfLap, "StartLevel music");
     AudioSystem::PlaySoundId(SND_V_GETREADY);
     mState = STATE_PLAYING;
     InputManager::ResetTouch();
@@ -527,6 +556,11 @@ void GameEngine::UpdatePlaying(float dt) {
         mDebrief = d;
         AudioSystem::StopAllLoops();
         AudioSystem::PlaySoundId(SND_V_LEVELCOMPLETE);
+        // 0x41bbb5: the debriefing starts PlayMusic(4, 73), then FadeOut(2) the boss music
+        // (and the mission music, in case the level ended without a boss warning).
+        AudioSystem::FadeOutSong(SONG_BOSS);
+        AudioSystem::FadeOutSong(SONG_MISSION);
+        AudioSystem::PlaySong(SONG_DEBRIEF);
         mState = STATE_DEBRIEF;
     }
 }
@@ -659,7 +693,6 @@ void GameEngine::UpdatePaused(float dt) {
         mState = STATE_PLAYING;
     } else if (input.cancelPressed) {
         mState = STATE_TITLE;
-        AudioSystem::PlayMusic("Music/LoveTheme.ogg");
     }
 }
 
@@ -669,7 +702,6 @@ void GameEngine::UpdateGameOver(float dt) {
     if (input.confirmPressed || input.pausePressed || input.touchPressed) {
         mApp = AppState();
         mState = STATE_TITLE;
-        AudioSystem::PlayMusic("Music/LoveTheme.ogg");
     }
 }
 

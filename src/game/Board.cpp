@@ -124,14 +124,18 @@ void Board::Update() {
     if (mNukeFlash < 0.0) mNukeFlash = 0.0;
     if (mShieldFlash > 0.0) mShieldFlash -= 0.3;
 
-    // Near the end of a level the progress counter waits until the sky is clear.
+    // Near the end of a level the progress counter waits until the sky is clear, then the
+    // boss warning starts (0x41b8b6).
     if (!mSurvival && mProgress == mLength - 600) {
+        bool hostile = false;
         for (const auto& c : mCrafts) {
             if (!c->friendly) {
-                --mProgress;
+                hostile = true;
                 break;
             }
         }
+        if (hostile) --mProgress;
+        else if (!mWarningStarted) StartBossWarning();
     }
     if (mCrateCooldown != 0) --mCrateCooldown;
     if (mNukeCooldown != 0) --mNukeCooldown;
@@ -150,6 +154,7 @@ void Board::Update() {
 
     // Same order as Board::Update (0x41b690).
     if (mDeath) UpdateBossDeath();
+    UpdateBossWarning();
     for (auto& c : mCrafts) {                       // 0x410ec0
         if (mRespawn != 0 && c.get() != mBoss) c->vx *= 1.01;   // enemies speed away while you are down
         if (c.get() == mBoss && mBoss->hittable) mBossBarHidden = false;
@@ -193,6 +198,7 @@ void Board::Update() {
     UpdateCrates();                                 // 0x411930
     UpdateCasings();                                // 0x411980
     UpdateMuzzleFlashes();                          // 0x411b40
+    SpawnAnims();                                   // 0x419eb0
 
     if (mDeaths != 0 && mDeaths < 25) ++mDeaths;   // tank flash animation (+0x1c8)
 
@@ -244,7 +250,7 @@ void Board::UpdateF() {
     int craterW = Img("crater") ? Img("crater")->GetCelWidth() : 0;
     EraseIf(mCraters, [craterW](const Crater& c) { return c.x < -320 - craterW / 2 || c.life < 0; });
 
-    WorldRenderer::Tick(s);
+    UpdateAnims();                                  // 0x418f50
 
     // Ground glows left by shells hitting the ground (0x411eb0).
     for (auto& g : mGlows) {
@@ -681,6 +687,114 @@ void Board::SpawnBoss() {
     mPendingParts.clear();
 }
 
+// -----------------------------------------------------------------------------
+// Ambient scenery animations (Images/Anims/Anims.xml)
+// -----------------------------------------------------------------------------
+
+// 0x419eb0: each empty plane slot has a 1-in-200 chance per tick to pick a random entry of
+// the mission's list; rare entries also need 1 in 20, and the entry only spawns if it
+// belongs to that slot's plane. Nothing new appears in the last 2000 ticks of a mission.
+void Board::SpawnAnims() {
+    const std::vector<AnimDef>& defs = WorldRenderer::LevelAnims();
+    if (defs.empty()) return;
+    for (int slot = 0; slot < 4; ++slot) {
+        if (mAnims[slot].def) continue;
+        if (mProgress >= mLength - 2000 && !mSurvival) continue;
+        if (Rand() % 200 != 0) continue;
+        const AnimDef& def = defs[Rand() % defs.size()];
+        if (def.rare && Rand() % 20 != 0) continue;
+        if (def.plane - 1 != slot) continue;
+
+        AmbientAnim& a = mAnims[slot];
+        a = AmbientAnim();
+        a.def = &def;
+        a.img = WorldRenderer::AnimImage(def);
+        a.x = def.offset;
+        a.y = def.y;
+        // Background anims sit at `offset` on their plane's 960-pixel image: take the
+        // copy of that spot that is about to scroll in from the right.
+        if (slot == 1) a.x += mBgX;
+        else if (slot == 2) a.x += mBg2X;
+        if (a.x < 640.0) a.x += 960.0;
+        if (a.x < 640.0) a.x += 960.0;    }
+}
+
+// 0x418f50: advance the frame (per-frame speeds from <Delay>), loop or ping-pong, drift by
+// mx and scroll with the plane; gone once fully off the left edge.
+void Board::UpdateAnims() {
+    static const double kPlaneScroll[4] = { 1.0, 0.3, 0.2, 0.1 };
+    for (int slot = 0; slot < 4; ++slot) {
+        AmbientAnim& a = mAnims[slot];
+        if (!a.def) continue;
+        const AnimDef& d = *a.def;
+        const int frames = std::max(1, d.frames);
+        const int last = d.nuke ? frames - 1 : frames;   // the nuked frame is not animated
+        if (!a.nuked) {
+            int cur = std::clamp((int)a.frame, 0, frames - 1);
+            double speed = d.speed;
+            for (const auto& delay : d.delays) {
+                if (delay.frame == cur) speed = delay.speed;
+            }
+            a.frame += a.dir * speed;
+            if (a.frame >= last) {
+                if (d.type != "looping") {   // ping-pong
+                    a.dir = -1;
+                    a.frame = last - 1;
+                } else {
+                    a.frame -= last;
+                }
+            } else if (a.frame < 0.0) {
+                a.dir = 1;
+                a.frame = 1.0;
+            }
+        } else {
+            a.frame = frames - 1;
+        }
+        a.x += d.mx * mScrollSpeed;
+        a.x -= mScrollSpeed * kPlaneScroll[slot];
+        int width = a.img ? a.img->width : 0;
+        if (a.x <= -width) a = AmbientAnim();
+    }
+}
+
+// 0x41a1d8: a nuke switches every on-screen animation that has a nuked frame to it.
+void Board::NukeAnims() {
+    for (AmbientAnim& a : mAnims) {
+        if (a.def && a.def->nuke && a.x < 640.0) a.nuked = true;
+    }
+}
+
+// 0x410c20: the current cel, top-left at (x, y).
+void Board::DrawAnim(int slot) {
+    const AmbientAnim& a = mAnims[slot];
+    if (!a.def || !a.img) return;
+    int frame = std::clamp((int)a.frame, 0, std::max(1, a.def->frames) - 1);
+    Gfx::DrawSprite(a.img, (int)a.x, a.y, false, frame);
+}
+
+void Board::StartBossWarning() {
+    mWarningStarted = true;
+    mWarning = true;
+    mWarnTimer = 0xfe;
+    mWarnCycle = 0;
+    AudioSystem::FadeOutSong(SONG_MISSION);   // FadeOut(1, true, 0.004)
+}
+
+void Board::UpdateBossWarning() {
+    if (!mWarning) return;
+    if (mWarnTimer == 0xfe) AudioSystem::PlaySoundId(SND_ALERT, 0);
+    if (mWarnTimer == 0x80 && mWarnCycle == 0) AudioSystem::PlaySoundId(SND_V_DANGER, 0);
+    if (mWarnTimer != 0) mWarnTimer -= 2;
+    if (mWarnTimer == 0) {
+        if (++mWarnCycle == 5) {
+            mWarning = false;
+            AudioSystem::PlaySong(SONG_BOSS);   // PlayMusic(2, 42)
+            return;
+        }
+        mWarnTimer = 0xfe;
+    }
+}
+
 void Board::AddPart(std::unique_ptr<Craft> part) {
     mPendingParts.push_back(std::move(part));
 }
@@ -894,6 +1008,10 @@ void Board::KillTank() {
     SpawnParticles(Img("tankflame"), mTankX, mTankY, 0.0, -2.0, 60, 3.0, 0.03, 3.0, 200, true, -1);
     AudioSystem::PlaySoundId(SND_TANKEXPLODE, Pan(mTankX));
     SpawnCraters((int)mTankX, 1);
+    if (mApp.lives <= 0) {   // last tank: FadeOutAll, FadeIn(5, 79)
+        AudioSystem::FadeOutAllSongs();
+        AudioSystem::FadeInSong(SONG_GAMEOVER);
+    }
 
     mTankX = -380.0;
     mTankY = 443;
@@ -930,7 +1048,7 @@ void Board::Draw() {
 
     Gfx::DrawSprite(WorldRenderer::Sky(), (int)mSkyX, 0);
     Gfx::DrawSprite(WorldRenderer::Sky(), (int)(mSkyX + 640.0f), 0);
-    WorldRenderer::RenderAnims(4);
+    DrawAnim(3);
 
     // Ordnance launched from behind the scenery (big missiles rising).
     Gfx::Translate(320, 0);
@@ -941,7 +1059,7 @@ void Board::Draw() {
 
     Gfx::DrawSprite(WorldRenderer::Bg2(), (int)mBg2X, 180);
     Gfx::DrawSprite(WorldRenderer::Bg2(), (int)mBg2X + 960, 180);
-    WorldRenderer::RenderAnims(3);
+    DrawAnim(2);
 
     Gfx::Translate(320, 0);
     DrawMushrooms();
@@ -950,7 +1068,7 @@ void Board::Draw() {
     applyNukeTint();
     Gfx::DrawSprite(WorldRenderer::Bg(), (int)mBgX, 180);
     Gfx::DrawSprite(WorldRenderer::Bg(), (int)mBgX + 960, 180);
-    WorldRenderer::RenderAnims(2);
+    DrawAnim(1);
     Gfx::SetColorizeImages(false);
     applyNukeTint();
 
@@ -963,7 +1081,7 @@ void Board::Draw() {
 
     Gfx::DrawSprite(WorldRenderer::Ground(), (int)mGroundX, 420);
     Gfx::DrawSprite(WorldRenderer::Ground(), (int)(mGroundX + 640.0f), 420);
-    WorldRenderer::RenderAnims(1);
+    DrawAnim(0);
 
     // Everything below is in world space.
     Gfx::Translate(320, 0);
@@ -1107,6 +1225,17 @@ void Board::Draw() {
         Gfx::Translate(-320, 0);
         Gfx::SetDrawMode(1);
         Gfx::SetColor(mShake, mShake, mShake, 255);
+        Gfx::FillRect(0, 0, 640, 480);
+        Gfx::SetDrawMode(0);
+        Gfx::Translate(320, 0);
+    }
+
+    // Boss warning: the screen pulses red with each siren cycle (first part of 0x40e920;
+    // its hazard stripes, boss picture and briefing text are not drawn yet).
+    if (mWarning && mWarnTimer != 0) {
+        Gfx::Translate(-320, 0);
+        Gfx::SetDrawMode(1);
+        Gfx::SetColor(mWarnTimer, 0, 0, 255);
         Gfx::FillRect(0, 0, 640, 480);
         Gfx::SetDrawMode(0);
         Gfx::Translate(320, 0);

@@ -254,6 +254,26 @@ private:
     bool mBossBarHidden = true; // +0x1e0 until the boss is in position
     bool mDeath = false;        // +0x300 boss death sequence (0x41bf20)
     int mDeathTimer = 0, mDeathCount = 0;
+    // Boss warning (object at +0x30c, 0x40ed50 / tick 0x40e800 / draw 0x40e920): starts
+    // when the sky is clear 600 ticks before the end. Five 127-tick siren cycles, then the
+    // boss music. Nukes are refused while it runs.
+    // Ambient scenery animations from Anims.xml (+0x314..+0x320): at most one per plane
+    // slot (0 ground, 1 background, 2 far background, 3 sky).
+    struct AmbientAnim {
+        const AnimDef* def = nullptr;   // null: slot empty
+        Texture* img = nullptr;
+        double frame = 0.0;             // +0x8
+        double x = 0.0;                 // +0x18, screen space; the strip's left edge
+        int y = 0;                      // +0x20, top edge
+        int dir = 1;                    // +0x44, ping-pong direction
+        bool nuked = false;             // +0x31, showing the nuked (last) frame
+    };
+    AmbientAnim mAnims[4];
+
+    bool mWarning = false;
+    bool mWarningStarted = false;
+    int mWarnTimer = 0;         // +0xc, 0xfe down to 0 by 2 per tick
+    int mWarnCycle = 0;         // +0x8
     std::vector<std::unique_ptr<Hazard>> mHazards;   // list +0x214
     std::vector<std::unique_ptr<Hazard>> mNewHazards;
 
@@ -282,6 +302,12 @@ private:
     void BossDefeated();            // 0x4138e0 (final stage)
     void SpawnBoss();
     void UpdateBossDeath();         // 0x4138e0 / 0x41bf70
+    void SpawnAnims();              // 0x419eb0
+    void UpdateAnims();             // 0x418f50
+    void NukeAnims();               // 0x41a1d8 (in FireNuke)
+    void DrawAnim(int slot);        // 0x410c20
+    void StartBossWarning();        // 0x41b954
+    void UpdateBossWarning();       // 0x40e800
     void ShowMessage(const std::string& text);
     void DrawMessages();
     void UpdateTracks();            // 0x4116b0

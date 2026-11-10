@@ -1,10 +1,10 @@
-# Linux x64 build + run environment (Fedora ships SDL3, SDL3_image and SDL3_mixer).
-# Used by tools/linux/hw.sh; nothing here ships with the game.
+# Linux x64 build + run environment (Fedora ships SDL3, SDL3_image, SDL3_mixer and
+# libopenmpt). Used by tools/linux/hw.sh; nothing here ships with the game.
 FROM registry.fedoraproject.org/fedora:44
 
 RUN dnf -y install --setopt=install_weak_deps=False \
         gcc-c++ cmake make pkgconf-pkg-config \
-        SDL3-devel SDL3_image-devel SDL3_mixer-devel libxmp pulseaudio-libs \
+        SDL3-devel SDL3_image-devel SDL3_mixer-devel libopenmpt-devel libxmp pulseaudio-libs \
         mesa-libGL-devel mesa-dri-drivers \
         xorg-x11-server-Xvfb xorg-x11-xauth \
     && dnf clean all

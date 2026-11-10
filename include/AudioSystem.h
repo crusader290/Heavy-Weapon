@@ -111,6 +111,19 @@ enum SoundId {
     SND_COUNT
 };
 
+// Song ids: the original's music table (VA 0x5274c0, { char file[40]; int order; }).
+// Songs 1-5 are sections of Music/AtomicTank.mo3 starting at the given order; each
+// section loops on its own.
+enum SongId {
+    SONG_LOVETHEME = 0,  // LoveTheme.ogg, played once at the intro screen
+    SONG_MISSION,        // order 0: missions (faded in at mission start)
+    SONG_BOSS,           // order 42: after the boss warning
+    SONG_MENU,           // order 59: main menu, map, armory
+    SONG_DEBRIEF,        // order 73: level complete
+    SONG_GAMEOVER,       // order 79: last tank destroyed
+    SONG_COUNT
+};
+
 class AudioSystem {
 public:
     static void Init();
@@ -139,11 +152,19 @@ public:
     // Engine diesel sound loop
     static void UpdateEngineSound(bool moving);
 
-    // Music
-    static void PlayMusic(const std::string& path, bool loop = true);
-    static void StopMusic();
-    // Background music on/off. When off, PlayMusic remembers the request but loads nothing;
-    // turning it back on starts the most recently requested track. SFX are unaffected.
+    // Music, as the original's PopCap MusicInterface calls (song ids are SongId).
+    // PlaySong = PlayMusic(id, order): starts at once. FadeInSong = FadeIn(id, order, 0.002):
+    // 5 s ramp. FadeOutSong / FadeOutAllSongs = FadeOut / FadeOutAll(true, 0.004): 2.5 s.
+    static void PlaySong(int song, bool noLoop = false);
+    static void FadeInSong(int song, bool noLoop = false);
+    static void FadeOutSong(int song);
+    static void FadeOutAllSongs();
+    // The song was started and has not been faded out or stopped (a finished one-shot
+    // song is not playing). With music off: whether it is the song that would play.
+    static bool IsSongPlaying(int song);
+    static void StopMusic();   // every song, immediately
+    // Background music on/off. When off, songs are remembered but not played; turning it
+    // back on restarts the most recently requested song. SFX are unaffected.
     static void SetMusicEnabled(bool on);
     static bool IsMusicEnabled() { return sMusicEnabled; }
     static void PauseMusic();
@@ -157,14 +178,14 @@ private:
     static constexpr int kNumTracks = 32;
     static MIX_Mixer* sMixer;
     static MIX_Track* sTracks[kNumTracks];
-    static MIX_Track* sMusicTrack;
     static std::unordered_map<std::string, MIX_Audio*> sSounds;
     static std::unordered_set<std::string> sMissingSounds;
-    static MIX_Audio* sCurrentMusic;
     static int sMusicVolume;
     static bool sMusicEnabled;
-    static std::string sMusicRequest;
-    static bool sMusicRequestLoop;
+    static int sCurrentSong;          // last song started (-1: none / faded out)
+    static bool sCurrentSongNoLoop;
+    static void StartSong(int song, bool fade, bool noLoop);
+    static bool LoadSong(int song);
     static int sSfxVolume;
     static int sEngineChannel;
     static int sCooldown[SND_COUNT];

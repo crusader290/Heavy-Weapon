@@ -104,14 +104,4 @@ struct AnimDef {
     std::vector<AnimDelayDef> delays;
 };
 
-// Runtime active animation instance
-struct ActiveAnim {
-    AnimDef def;
-    float currentFrame = 0.0f;
-    float worldX = 0.0f;
-    float y = 0.0f;
-    bool nuked = false;
-    bool visible = true;
-};
-
 } // namespace HeavyWeapon

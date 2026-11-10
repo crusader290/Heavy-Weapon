@@ -40,9 +40,9 @@ constexpr int INITIAL_NUKES = 1;
 constexpr int MAX_NUKES = 3;
 constexpr int NUM_CAMPAIGN_MISSIONS = 19;
 
-// Purely visual scenery animations from Images/Anims/Anims.xml (igloos, snowmen...). They have
-// no gameplay effect; off saves their texture loads and per-frame work. Set true to restore.
-constexpr bool kDecorativeAnims = false;
+// Purely visual scenery animations from Images/Anims/Anims.xml (yetis, igloos, cows...).
+// They have no gameplay effect; false skips them entirely.
+constexpr bool kDecorativeAnims = true;
 
 // Armory weapons, in the order of the armory slots and upgrades.png
 // (app +0x980..+0x994 in the original; see UpgradeSlot in game/AppState.h).

@@ -40,6 +40,8 @@ public:
     void Shutdown();
 
     void Update(float dt);
+
+    void UpdateMenuMusic();
     void Render();
 
 private:

@@ -189,6 +189,10 @@ void Board::UpdatePowerUps() {
 // -----------------------------------------------------------------------------
 
 void Board::FireNuke() {
+    if (mWarning) {   // no nukes during the boss warning
+        AudioSystem::PlaySoundId(SND_DENIED, 0);
+        return;
+    }
     if (mApp.up[UP_NUKES] <= 0 || mRespawn != 0 || mNukeFlash != 0.0) {
         AudioSystem::PlaySoundId(SND_DENIED, 0);
         if (mApp.up[UP_NUKES] == 0 && mRespawn == 0) mNoNukeMsg = 250;
@@ -197,7 +201,7 @@ void Board::FireNuke() {
     --mApp.up[UP_NUKES];
     mShake = 254;
     mNukeFlash = 255.0;
-    WorldRenderer::TriggerNuke();
+    NukeAnims();
 
     // Every enemy craft in the air is destroyed; during a boss fight everything instead
     // takes maxHP / (mission + 5) damage.

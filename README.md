@@ -24,10 +24,16 @@ to the window, either at 4:3 with black bars or stretched to fill.
 - **Survival mode:** endless waves from `survival0-9.xml` that step up every minute, with
   one tank, more frequent supply drops, and a saved best time.
 - **Original look:** 4-plane parallax, PopCap's split `.jpg` + `_.png` alpha masks, additive
-  effects and particles.
+  effects and particles. Each region's ambient scenery from `Anims.xml` (yetis, igloos, cows,
+  oil rigs, propaganda posters, ...) wanders in as in the original, and gets nuked with
+  everything else. Survival mode has its own backdrop.
 - **Controls:** drive with A/D and aim with the mouse, or play twin-stick on any gamepad,
   or use a touch screen.
-- **Audio:** sound effects and menu music through SDL3_mixer, with a music toggle.
+- **Music:** the full soundtrack. `AtomicTank.mo3` is played with libopenmpt and holds five
+  sections, cued like the original: menus, missions, a boss theme after the siren warning,
+  the debriefing and game over. `LoveTheme.ogg` plays once at startup. Songs cross-fade,
+  and there is a music toggle.
+- **Sound effects** through SDL3_mixer, with the original's stereo panning.
 - **No load hitches:** every sprite and sound is preloaded at startup, behind a progress bar.
 
 ---
@@ -66,7 +72,8 @@ The game looks for data in this order and uses the first match:
   *Desktop development with C++* workload, which includes MSVC, CMake and Ninja.
 - An internet connection on the first build. SDL3 3.4.20, SDL3_image 3.4.8 and
   SDL3_mixer 3.2.4 are downloaded from the official [libsdl-org](https://github.com/libsdl-org)
-  release packages into the build folder.
+  release packages, and libopenmpt 0.8.10 from [lib.openmpt.org](https://lib.openmpt.org),
+  into the build folder.
 
 ### Build
 
@@ -75,7 +82,7 @@ tools\windows\build.cmd
 ```
 
 This finds Visual Studio, sets up the x64 compiler, and builds `build-windows\heavyweapon.exe`.
-It also copies the SDL3 DLLs next to the exe.
+It also copies the SDL3 and libopenmpt DLLs next to the exe.
 
 To build in a default data folder so the exe can be run from anywhere:
 
@@ -107,18 +114,18 @@ one folder, with the game data folders next to them.
 
 ### Requirements
 
-A C++17 compiler, CMake 3.24 or newer, and OpenGL development files. For SDL3 you can use
-either option:
+A C++17 compiler, CMake 3.24 or newer, and OpenGL development files. For SDL3 and
+libopenmpt you can use either option:
 
 - **Distribution packages**, if they're new enough (SDL3 ≥ 3.2, SDL3_image ≥ 3.2,
-  SDL3_mixer ≥ 3.0). On Fedora 44:
+  SDL3_mixer ≥ 3.0, libopenmpt ≥ 0.6). On Fedora 44:
   ```bash
-  sudo dnf install gcc-c++ cmake SDL3-devel SDL3_image-devel SDL3_mixer-devel mesa-libGL-devel
+  sudo dnf install gcc-c++ cmake SDL3-devel SDL3_image-devel SDL3_mixer-devel libopenmpt-devel mesa-libGL-devel
   ```
 - **Bundled.** If those packages are missing (for example on Ubuntu 24.04), CMake
-  downloads the SDL3 release sources and builds them as static libraries. Force this with
-  `-DHW_BUNDLE_SDL=ON`. SDL3 then needs its usual X11/Wayland/audio development packages.
-  On Debian or Ubuntu:
+  downloads the release sources and builds them as static libraries. Force this with
+  `-DHW_BUNDLE_SDL=ON` and/or `-DHW_BUNDLE_OPENMPT=ON`. libopenmpt needs nothing extra;
+  SDL3 needs its usual X11/Wayland/audio development packages. On Debian or Ubuntu:
   ```bash
   sudo apt install build-essential cmake ninja-build pkg-config libgl-dev libegl-dev \
       libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev \
@@ -185,7 +192,7 @@ Example: `heavyweapon --state play --level 4 --frames 600 --screenshot level5.pn
 src/core/       game loop, state machine, menus, optional profiler (HW_PERF)
 src/game/       board, player tank, enemies, bosses, weapons, supplies, effects
 src/render/     GL renderer, textures and alpha masks, bitmap fonts, parallax
-src/platform/   case-insensitive file lookup, audio (SDL3_mixer), input
+src/platform/   case-insensitive file lookup, audio (SDL3_mixer + libopenmpt), input
 src/loader/     XML data loading
 include/        headers
 3rdparty/       tinyxml2
@@ -197,10 +204,9 @@ tools/linux/    Linux container build / run / screenshot script
 
 ## Known limitations
 
-- `AtomicTank.mo3` (the in-mission music) can't be decoded yet, so missions play
-  without music. Sound effects and menu music work.
-- Decorative background animations (igloos, snowmen, ...) are off by default. See
-  `kDecorativeAnims` in `include/Constants.h`.
+- The boss warning only pulses the screen red with its siren. The original also drew hazard
+  stripes, a boss picture and a typed-out briefing.
+- The intro movie screens (`intro.swf`, story `.swf` cutscenes) aren't implemented.
 
 ---
 
@@ -209,6 +215,7 @@ tools/linux/    Linux container build / run / screenshot script
 - Based on the PS Vita port by
   [Chillaxhson](https://github.com/Chillaxhson/heavy-weapon-deluxe-vita). This repository
   turned it into a Windows/Linux desktop port on SDL3.
+- Music playback by [libopenmpt](https://lib.openmpt.org/libopenmpt/) (BSD-3-Clause).
 - *Heavy Weapon Deluxe* is © 2005 PopCap Games, Inc. / Electronic Arts. This project is
   not affiliated with or endorsed by them.
 - This repository contains no copyrighted game assets, music, or binaries. It is a fan
