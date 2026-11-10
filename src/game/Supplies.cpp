@@ -6,6 +6,8 @@
 #include "game/Enemies.h"
 #include "game/Gfx.h"
 #include "AudioSystem.h"
+#include "ModSystem.h"
+#include "game/PowerUps.h"
 #include "WorldRenderer.h"
 #include <algorithm>
 #include <cmath>
@@ -23,8 +25,8 @@ static void EraseIf(std::vector<T>& v, Pred pred) {
 
 // Power-up names, caps and how fast they unlock with the mission number (table at
 // VA 0x52bb18: char name[32], int max, ..., double weight). Weight 0 = always offered.
-struct PowerUpInfo { const char* message; int max; double weight; int sound; };
-static const PowerUpInfo kPowerUps[6] = {
+// Mutable: mods may tweak it (hw.tweak_powerup).
+static PowerUpInfo kPowerUps[6] = {
     { "NUKE ACQUIRED",   3,     0.0, SND_POWERUP },
     { "SHIELD UPGRADED", 3,     0.0, SND_SHIELDUP },
     { "SPEED INCREASED", 10000, 1.0, SND_SPEEDUP },
@@ -32,6 +34,8 @@ static const PowerUpInfo kPowerUps[6] = {
     { "RAPID FIRE",      10000, 1.0, SND_GUNPOWERUP },
     { "SPREAD SHOT",     4,     0.5, SND_GUNPOWERUP },
 };
+
+PowerUpInfo& OriginalPowerUp(int i) { return kPowerUps[std::clamp(i, 0, 5)]; }
 static const char* kWeaponNames[6] = {
     "DEFENSE ORBS", "HOMING MISSILE", "LASER", "ROCKETS", "FLAK CANNON", "THUNDERSTRIKE"
 };
@@ -111,15 +115,15 @@ void Board::UpdateCrates() {
 // -----------------------------------------------------------------------------
 
 int Board::PickPowerUp() {
-    std::vector<int> candidates;
+    std::vector<Mods::PickupCandidate> candidates;
     const double tier = Tier();
     for (int i = 0; i < 6; ++i) {
         int level = mApp.up[i];
         bool unlocked = level <= tier * kPowerUps[i].weight || kPowerUps[i].weight <= 0.0;
-        if (!unlocked || level == kPowerUps[i].max) continue;
+        if (!unlocked || level >= kPowerUps[i].max || kPowerUps[i].chance <= 0.0) continue;
         if (i == UP_NUKES && !(mNukeCooldown == 0 && (Rand() & 1) == 0)) continue;
         if (i == UP_SHIELD && mShieldCooldown != 0) continue;
-        candidates.push_back(i);
+        candidates.push_back({ i, kPowerUps[i].chance });
     }
     if (mSurvival) {
         // Survival also hands out armory weapons, one level per tier.
@@ -127,12 +131,26 @@ int Board::PickPowerUp() {
         for (int i = UP_ORBS; i <= UP_STATIC; ++i) owned += mApp.up[i];
         if (owned < Tier()) {
             for (int i = UP_ORBS; i <= UP_STATIC; ++i) {
-                if (mApp.up[i] < 3) candidates.push_back(i);
+                if (mApp.up[i] < 3) candidates.push_back({ i, 1.0 });
             }
         }
     }
+    Mods::AddPickupCandidates(candidates, tier, mSurvival);
     if (candidates.empty()) return -1;
-    return candidates[Rand() % candidates.size()];
+    // Equal weights (no mod changed anything): the original uniform pick.
+    double total = 0.0;
+    bool uniform = true;
+    for (const auto& c : candidates) {
+        total += c.weight;
+        uniform &= c.weight == 1.0;
+    }
+    if (uniform) return candidates[Rand() % candidates.size()].type;
+    double r = (Rand() % 1000000) / 1000000.0 * total;
+    for (const auto& c : candidates) {
+        if (r < c.weight) return c.type;
+        r -= c.weight;
+    }
+    return candidates.back().type;
 }
 
 void Board::DropPowerUp(double x, double y, double vx, double vy, int type) {
@@ -161,10 +179,16 @@ void Board::UpdatePowerUps() {
             continue;
         }
         if (mRespawn != 0) continue;
-        if (!PixelHit(pupImg, (int)p.x, (int)p.y, p.type, 0, false, Img("tank"), (int)mTankX, mTankY, (int)mTread, 0, false)) continue;
+        int cel = p.type;
+        const Texture* img = p.type >= Mods::kModPickupBase ? Mods::PickupImage(p.type, cel) : pupImg;
+        if (!PixelHit(img, (int)p.x, (int)p.y, cel, 0, false, Img("tank"), (int)mTankX, mTankY, (int)mTread, 0, false)) continue;
 
         int t = p.type;
         p.type = -1;
+        if (t >= Mods::kModPickupBase) {
+            Mods::OnPickup(t, p.x, p.y);
+            continue;
+        }
         if (t >= UP_ORBS) {
             if (mApp.up[t] < 3) {
                 ++mApp.up[t];

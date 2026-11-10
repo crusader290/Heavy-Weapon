@@ -59,6 +59,8 @@ public:
 
     // A PlayStation (PS3/PS4/PS5) controller is the active gamepad.
     static bool PlayStationPadConnected();
+    // The active gamepad, or nullptr (mod abilities read their own buttons).
+    static SDL_Gamepad* Gamepad() { return sController; }
 
 private:
     static InputState sState;

@@ -30,6 +30,7 @@ struct LaunchOptions {
     int armoryLevel = 0;         // give every armory weapon (and spread) this level (testing)
     std::string dataPath;        // extra game-data directory, searched first
     std::string buttons;         // xbox|playstation|auto for this run; "" = settings.ini
+    bool noMods = false;         // --no-mods: skip the mods folder
 };
 
 class GameEngine {

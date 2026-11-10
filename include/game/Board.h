@@ -22,7 +22,10 @@ class Craft;
 class Hazard;
 struct FlakBurst;
 
+class ModBridge;
+
 class Board {
+    friend class ModBridge;   // mod API (src/mods/ModSystem.cpp)
 public:
     Board(AppState& app, const LevelDef* level, const std::vector<CraftDef>& craftById, bool survival);
     ~Board();
@@ -44,6 +47,8 @@ public:
     int Kills() const { return mKills; }
     int Spawned() const { return mSpawned; }
     int FriendlyKills() const { return mFriendlyKills; }
+    // A craft was destroyed: statistics and the mods' enemy_killed event.
+    void CountKill(const Craft& c, bool friendlyKill);
     void CountCraft(int spawned, int killed, int friendlyKilled) {
         mSpawned += spawned;
         mKills += killed;
@@ -195,6 +200,7 @@ private:
     double mShieldFlash = 0.0;  // +0x148
     int mCooldown[7] = {};      // +0xa8..+0xc0
     bool mGod = false;          // testing: KillTank does nothing
+    int mModInvuln = 0;         // mods: ticks the tank cannot be destroyed (hw.invulnerable)
     int mRespawn = 300;         // +0x80 the tank deploys when this runs out
     int mDeaths = 0;            // +0x1c8
     int mDeathX = 0;            // +0x1cc

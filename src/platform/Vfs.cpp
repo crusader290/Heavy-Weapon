@@ -107,6 +107,12 @@ static std::string FindCaseInsensitive(const std::string& root, const std::strin
 static std::mutex sVfsMutex;
 static std::unordered_map<std::string, std::string> sMemo;
 
+void Vfs::AddSearchPathFront(const std::string& path) {
+    std::lock_guard<std::mutex> lock(sVfsMutex);
+    sMemo.clear();
+    sSearchPaths.insert(sSearchPaths.begin(), NormalizeSlashes(path));
+}
+
 void Vfs::Init(const std::string& customBasePath) {
     std::lock_guard<std::mutex> lock(sVfsMutex);
     sMemo.clear();
@@ -173,6 +179,20 @@ std::string Vfs::Resolve(const std::string& relativePath) {
     bool found;
     std::string scratch;
     return ResolveMemo(relativePath, sSearchPaths, found, scratch);
+}
+
+int Vfs::Rank(const std::string& relativePath) {
+    bool found;
+    std::string scratch;
+    const std::string resolved = ResolveMemo(relativePath, sSearchPaths, found, scratch);
+    if (!found) return -1;
+    std::lock_guard<std::mutex> lock(sVfsMutex);
+    for (size_t i = 0; i < sSearchPaths.size(); ++i) {
+        std::string root = sSearchPaths[i];
+        if (!root.empty() && root.back() != '/' && root.back() != ':') root += "/";
+        if (resolved.compare(0, root.size(), root) == 0) return (int)i;
+    }
+    return (int)sSearchPaths.size();   // an existing path given as-is
 }
 
 bool Vfs::Exists(const std::string& relativePath) {

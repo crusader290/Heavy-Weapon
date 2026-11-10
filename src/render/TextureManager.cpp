@@ -306,14 +306,19 @@ Texture TextureManager::LoadFromFiles(const std::string& colorPath, const std::s
 // Finds the colour image for an asset base path (no extension) and its optional alpha
 // mask. PopCap stores colour and alpha separately as "name.ext" + "name_.ext" (or the
 // older "_name.ext"), with any mix of .png/.jpg/.gif.
+// The image from the first search path that has it in any format (so a mod's foo.png
+// replaces the game's foo.jpg), and its mask only from that same place (a mod's own
+// alpha must not get the game's _foo.gif mask).
 static bool FindImageFiles(const std::string& base, std::string& outColor, std::string& outMask) {
     static const char* kExts[] = { ".png", ".jpg", ".gif" };
     outColor.clear();
     outMask.clear();
+    int colorRank = -1;
     for (const char* ext : kExts) {
-        if (Vfs::Exists(base + ext)) {
+        int rank = Vfs::Rank(base + ext);
+        if (rank >= 0 && (colorRank < 0 || rank < colorRank)) {
             outColor = base + ext;
-            break;
+            colorRank = rank;
         }
     }
     if (outColor.empty()) return false;
@@ -323,7 +328,7 @@ static bool FindImageFiles(const std::string& base, std::string& outColor, std::
     std::string file = (slash == std::string::npos) ? base : base.substr(slash + 1);
     for (const char* ext : kExts) {
         for (const std::string& candidate : { base + "_" + ext, dir + "_" + file + ext }) {
-            if (Vfs::Exists(candidate)) {
+            if (Vfs::Rank(candidate) == colorRank) {
                 outMask = candidate;
                 return true;
             }

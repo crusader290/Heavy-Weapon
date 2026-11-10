@@ -172,7 +172,7 @@ struct BossCopter : Craft {
     // Slot 4 (0x43f800): the score, then the death sequence takes over.
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -292,7 +292,7 @@ struct Battleship : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -455,7 +455,7 @@ struct Rainer : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -658,7 +658,7 @@ struct Wrecker : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
         loose = true;
@@ -813,7 +813,7 @@ struct Ape : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -1058,7 +1058,7 @@ struct Eyebot : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -1205,7 +1205,7 @@ struct Head : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -1394,7 +1394,7 @@ struct Mechworm : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -1610,7 +1610,7 @@ struct Robot : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }
@@ -1885,7 +1885,7 @@ struct FinalBoss : Craft {
     }
     void Die() override {
         if (b.BossDying()) return;
-        b.CountCraft(0, 1, 0);
+        b.CountKill(*this, false);
         b.AddScore(points, (int)x, (int)y);
         b.StartBossDeath();
     }

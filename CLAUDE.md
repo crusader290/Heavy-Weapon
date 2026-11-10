@@ -87,6 +87,7 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
 | `src/platform/AudioSystem.cpp` | SDL3_mixer: 32-track SFX pool emulating SDL2_mixer channels; songs (one track + one libopenmpt instance each) |
 | `src/platform/Vfs.cpp` | Case-insensitive data lookup over search paths (memoised) |
 | `src/render/` | GL renderer (640×480 FBO scaled to window), textures + PopCap alpha masks, fonts, parallax |
+| `src/mods/ModSystem.cpp` | Mods: discovery, asset overrides, Lua sandbox, `hw.*` API, custom projectiles, ability HUD |
 | `src/loader/XmlLoader.cpp` | Parses the game's XML (levels, waves, craft, bosses) via tinyxml2 |
 | `include/Constants.h` | Screen size, timestep, feature switches (`kDecorativeAnims`) |
 
@@ -117,6 +118,20 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
   one per plane slot, spawned at random, drawn from the **top-left** (the XML comment says
   centre; the exe doesn't). `Anims.xml` is per **region**, not per mission:
   `region = survival ? 10 : mission == 18 ? 9 : mission % 9` (0x4015f0).
+- **Mods** (`src/mods/ModSystem.cpp`, user docs in `docs/MODDING.md`; keep the two in
+  sync). The Lua state is sandboxed: only base/table/string/math/utf8/coroutine, and
+  `io`/`os`/`loadlib`/`debug` aren't even compiled (see `hw_lua` in CMakeLists.txt).
+  `dofile`/`loadfile`/`load`/`require` are removed, and there's an instruction budget per
+  call. Don't widen that without the user asking. Every callback goes through `Call()`
+  (pcall + traceback to `mods.log`). Board internals are reached via `ModBridge` (a friend
+  of `Board`). Kills must go through `Board::CountKill` so `enemy_killed` fires. Mod
+  pickups use power-up type numbers from `Mods::kModPickupBase` (1000).
+- **Asset overrides:** mod folders are pushed in front of the Vfs search path.
+  `Vfs::Rank` keeps an image and its alpha mask from the same folder; keep using it in
+  `FindImageFiles`.
+- **Testing mods:** run with a working directory that contains a `mods/` folder (e.g. in
+  the scratchpad), so nothing is written into the user's game folder. `mods.log` lands in
+  that working directory.
 - The boss warning (`Board::UpdateBossWarning`, 0x40e800) is what starts the boss music.
   Nukes are refused while it runs.
 - The in-game help screen (`GameEngine::RenderHelp`) mirrors the bindings in

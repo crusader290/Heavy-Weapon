@@ -46,7 +46,7 @@ void Craft::Draw() {
 
 // 0x431330 + 0x431480 + AddScore: the common "destroyed" sequence.
 void Craft::Die() {
-    b.CountCraft(0, 1, friendly ? 1 : 0);
+    b.CountKill(*this, friendly);
     // 1 in 20 kills drops a supply crate (crates arrive with the power-up port).
     if (Rand() % 20 == 0 && b.CanDropCrate() && y <= 280.0 && x >= -320.0 && x < 320.0) {
         b.DropCrate((int)x, (int)y);

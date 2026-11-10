@@ -46,7 +46,8 @@ static void PrintUsage() {
         "  --progress <n>                   start the level at progress n (n < 0: that many ticks before the end)\n"
         "  --scale <n>                      initial window size as a multiple of 640x480\n"
         "  --data <dir>                     game data directory (Images/, Sounds/, data/, ...)\n"
-        "  --buttons <xbox|playstation|auto>  gamepad button names in prompts (default: settings.ini)\n";
+        "  --buttons <xbox|playstation|auto>  gamepad button names in prompts (default: settings.ini)\n"
+        "  --no-mods                        do not load anything from the mods folder\n";
 }
 
 static bool ParseArgs(int argc, char* argv[], HeavyWeapon::LaunchOptions& opts, int& windowScale) {
@@ -64,6 +65,7 @@ static bool ParseArgs(int argc, char* argv[], HeavyWeapon::LaunchOptions& opts, 
         else if (a == "--progress" && hasValue) opts.startProgress = std::atoi(argv[++i]);
         else if (a == "--data" && hasValue) opts.dataPath = argv[++i];
         else if (a == "--buttons" && hasValue) opts.buttons = argv[++i];
+        else if (a == "--no-mods") opts.noMods = true;
         else if (a == "--scale" && hasValue) windowScale = std::max(1, std::atoi(argv[++i]));
         else if (a == "--help" || a == "-h") { PrintUsage(); return false; }
         else { std::cerr << "Unknown argument: " << a << "\n"; PrintUsage(); return false; }

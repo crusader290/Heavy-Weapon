@@ -38,8 +38,27 @@ set(SOURCES
     src/game/Supplies.cpp
     src/game/Weapons.cpp
     src/game/Bosses.cpp
+    src/mods/ModSystem.cpp
     3rdparty/tinyxml2/tinyxml2.cpp
 )
+
+# Lua 5.4 for mod scripts (3rdparty/lua, vendored). Only the core and the pure libraries
+# the sandbox opens: io, os, package/loadlib and debug are not compiled in at all.
+set(_lua 3rdparty/lua)
+add_library(hw_lua STATIC
+    ${_lua}/lapi.c ${_lua}/lcode.c ${_lua}/lctype.c ${_lua}/ldebug.c ${_lua}/ldo.c
+    ${_lua}/ldump.c ${_lua}/lfunc.c ${_lua}/lgc.c ${_lua}/llex.c ${_lua}/lmem.c
+    ${_lua}/lobject.c ${_lua}/lopcodes.c ${_lua}/lparser.c ${_lua}/lstate.c ${_lua}/lstring.c
+    ${_lua}/ltable.c ${_lua}/ltm.c ${_lua}/lundump.c ${_lua}/lvm.c ${_lua}/lzio.c
+    ${_lua}/lauxlib.c ${_lua}/lbaselib.c ${_lua}/lcorolib.c ${_lua}/lmathlib.c
+    ${_lua}/lstrlib.c ${_lua}/ltablib.c ${_lua}/lutf8lib.c)
+target_include_directories(hw_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/${_lua})
+if(MSVC)
+    target_compile_options(hw_lua PRIVATE /W0)
+else()
+    target_compile_options(hw_lua PRIVATE -w)
+    target_link_libraries(hw_lua PUBLIC m)
+endif()
 
 find_package(OpenGL REQUIRED)
 
@@ -217,7 +236,7 @@ target_include_directories(heavyweapon PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tinyxml2)
 target_link_libraries(heavyweapon PRIVATE
-    SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer SDL3::SDL3 hw_openmpt OpenGL::GL)
+    SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer SDL3::SDL3 hw_openmpt hw_lua OpenGL::GL)
 if(HW_PERF)
     target_compile_definitions(heavyweapon PRIVATE HW_PERF)
 endif()

@@ -7,6 +7,7 @@
 #include "FontRenderer.h"
 #include "TextureManager.h"
 #include "WorldRenderer.h"
+#include "ModSystem.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -40,10 +41,17 @@ Board::Board(AppState& app, const LevelDef* level, const std::vector<CraftDef>& 
     : mApp(app), mLevel(level), mCraftById(craftById), mSurvival(survival) {
     if (level) mLength = level->length;
     if (mApp.up[UP_SHIELD] == 0) mApp.up[UP_SHIELD] = 1;   // every level starts with one shield hit
+    Mods::AttachBoard(this);
 }
 
 Board::~Board() {
+    Mods::DetachBoard(this);
     AudioSystem::StopAllLoops();
+}
+
+void Board::CountKill(const Craft& c, bool friendlyKill) {
+    CountCraft(0, 1, friendlyKill ? 1 : 0);
+    Mods::OnEnemyKilled(c);
 }
 
 const CraftDef& Board::CraftStats(int type) const {
@@ -199,6 +207,8 @@ void Board::Update() {
     UpdateCasings();                                // 0x411980
     UpdateMuzzleFlashes();                          // 0x411b40
     SpawnAnims();                                   // 0x419eb0
+    if (mModInvuln > 0) --mModInvuln;
+    Mods::OnTick();                                 // mod abilities, timers, `tick`
 
     if (mDeaths != 0 && mDeaths < 25) ++mDeaths;   // tank flash animation (+0x1c8)
 
@@ -1000,7 +1010,7 @@ void Board::SpawnCraft(int type) {
 
 // Tank destroyed (0x41a880).
 void Board::KillTank() {
-    if (mRespawn != 0 || mGod) return;
+    if (mRespawn != 0 || mGod || mModInvuln > 0) return;
     mRespawn = 400;
     ++mDeaths;
     mDeathX = (int)mTankX;
@@ -1026,6 +1036,7 @@ void Board::KillTank() {
     mCrates.clear();
     mWaves.clear();
     for (auto& t : mTracks) t.active = false;
+    Mods::OnTankDestroyed();
 }
 
 // -----------------------------------------------------------------------------
@@ -1190,7 +1201,9 @@ void Board::Draw() {
         Gfx::DrawSprite(Img("crates"), (int)c.x, (int)c.y, true, (int)c.frame);
     }
     for (const auto& p : mPowerUps) {
-        Gfx::DrawSprite(Img("powerups"), (int)p.x, (int)p.y, true, p.type);
+        int cel = p.type;
+        const Texture* img = p.type >= Mods::kModPickupBase ? Mods::PickupImage(p.type, cel) : Img("powerups");
+        Gfx::DrawSprite(img, (int)p.x, (int)p.y, true, cel);
     }
     DrawBeams();
 
@@ -1367,6 +1380,7 @@ void Board::DrawHUD() {
         snprintf(buf, sizeof(buf), "SURVIVAL  %d:%02d", secs / 60, secs % 60);
         FontRenderer::DrawStringBaseline("Computer", buf, 209, 20, green);
     }
+    Mods::DrawHud();
 }
 
 } // namespace HeavyWeapon

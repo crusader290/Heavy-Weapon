@@ -35,6 +35,8 @@ to the window, either at 4:3 with black bars or stretched to fill.
   and there is a music toggle.
 - **Sound effects** through SDL3_mixer, with the original's stereo panning.
 - **No load hitches:** every sprite and sound is preloaded at startup, behind a progress bar.
+- **Mods:** Lua scripts can add pickups, abilities and projectiles, tweak the original
+  power-ups, and replace any game file. See [Mods](#mods).
 
 ---
 
@@ -175,12 +177,34 @@ themselves work the same either way.
 
 ---
 
+## Mods
+
+Put mod folders in a `mods` folder next to your game data; each needs a `mod.lua`.
+Mods can:
+- add pickups that the supply helicopter drops (or that your own rules drop)
+- add abilities on a key or gamepad button
+- fire custom projectiles
+- tweak the original power-ups
+- replace any sprite, sound, music or data file by shipping a file with the same path
+
+Scripts run sandboxed (no file or system access). Errors go to `mods.log`, and the title
+screen lists the loaded mods.
+
+- Guide and API reference: [docs/MODDING.md](docs/MODDING.md)
+- Example mod (two pickups, two abilities, a tweak and an event hook):
+  [examples/mods/PlasmaDemo](examples/mods/PlasmaDemo/mod.lua). Copy it to
+  `mods/PlasmaDemo/` and start a mission: **F** fires plasma bolts and **G** calls an
+  airstrike.
+
+---
+
 ## Command-line options
 
 | Option | Effect |
 | :--- | :--- |
 | `--data <dir>` | Game data directory, searched first |
 | `--buttons <xbox\|playstation\|auto>` | Gamepad button names in prompts for this run (overrides `settings.ini`) |
+| `--no-mods` | Don't load anything from the `mods` folder |
 | `--scale <n>` | Initial window size as a multiple of 640×480 (default 2) |
 | `--stretch` | Fill the window instead of keeping 4:3 |
 | `--state <title\|map\|play\|survival\|armory\|options\|help>` | Screen to start on |
@@ -200,11 +224,15 @@ src/core/       game loop, state machine, menus, optional profiler (HW_PERF)
 src/game/       board, player tank, enemies, bosses, weapons, supplies, effects
 src/render/     GL renderer, textures and alpha masks, bitmap fonts, parallax
 src/platform/   case-insensitive file lookup, audio (SDL3_mixer + libopenmpt), input
+src/mods/       mod loader, Lua sandbox and the hw.* API
 src/loader/     XML data loading
 include/        headers
-3rdparty/       tinyxml2
+3rdparty/       tinyxml2, Lua 5.4
+docs/           MODDING.md (mod guide and API reference)
+examples/mods/  example mod
 tools/windows/  Windows build script
 tools/linux/    Linux container build / run / screenshot script
+tools/mods/     generator for the example mod's sprites and sound
 ```
 
 ---
@@ -223,6 +251,7 @@ tools/linux/    Linux container build / run / screenshot script
   [Chillaxhson](https://github.com/Chillaxhson/heavy-weapon-deluxe-vita). This repository
   turned it into a Windows/Linux desktop port on SDL3.
 - Music playback by [libopenmpt](https://lib.openmpt.org/libopenmpt/) (BSD-3-Clause).
+- Mod scripting by [Lua](https://www.lua.org) 5.4 (MIT), vendored in `3rdparty/lua`.
 - *Heavy Weapon Deluxe* is © 2005 PopCap Games, Inc. / Electronic Arts. This project is
   not affiliated with or endorsed by them.
 - This repository contains no copyrighted game assets, music, or binaries. It is a fan

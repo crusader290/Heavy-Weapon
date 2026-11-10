@@ -1,6 +1,7 @@
 #include "GameEngine.h"
 #include "Vfs.h"
 #include "InputManager.h"
+#include "ModSystem.h"
 #include "Perf.h"
 #include "game/Bosses.h"
 #include <cmath>
@@ -157,6 +158,7 @@ GameEngine::~GameEngine() {
 bool GameEngine::Init(SDL_Window* window, const LaunchOptions& opts) {
     mOpts = opts;
     Vfs::Init(opts.dataPath);
+    Mods::Init(!opts.noMods);   // before anything loads: mods may override game files
     TextureManager::Init();
     if (!Renderer::Init(window)) {
         return false;
@@ -223,6 +225,8 @@ bool GameEngine::Init(SDL_Window* window, const LaunchOptions& opts) {
 void GameEngine::Shutdown() {
     if (!mInitialized) return;
     mInitialized = false;
+    mBoard.reset();       // its projectiles hold mod callbacks
+    Mods::Shutdown();
     AudioSystem::Shutdown();
     InputManager::Shutdown();
     TextureManager::Shutdown();
@@ -374,6 +378,7 @@ void GameEngine::UpdateTitle(float dt) {
         case MENU_MISSION:
             mCurrentLevelIndex = 0;
             mApp = AppState();
+            Mods::OnRunReset();
             mState = STATE_MISSION_SELECT;
             break;
         case MENU_SURVIVAL:
@@ -382,6 +387,7 @@ void GameEngine::UpdateTitle(float dt) {
                 break;
             }
             mApp = AppState();
+            Mods::OnRunReset();
             StartLevel(std::rand() % std::max(1, (int)mLevels.size()), true);
             break;
         case MENU_OPTIONS:
@@ -498,6 +504,7 @@ void GameEngine::StartLevel(int levelIndex, bool survival) {
     AudioSystem::PlaySoundId(SND_V_GETREADY);
     mState = STATE_PLAYING;
     InputManager::ResetTouch();
+    Mods::OnLevelStart();
     PERF_LAP(perfTotal, "StartLevel TOTAL");
 }
 
@@ -733,6 +740,7 @@ void GameEngine::UpdateGameOver(float dt) {
     const InputState& input = InputManager::GetState();
     if (input.confirmPressed || input.pausePressed || input.touchPressed) {
         mApp = AppState();
+        Mods::OnRunReset();
         mState = STATE_TITLE;
     }
 }
@@ -790,6 +798,21 @@ void GameEngine::RenderTitle() {
 
     // Music toggle readout in the empty black slot of the title art (Tab / Back, or click it).
     FontRenderer::DrawString("Normal", MusicLabel(), 495.0f, 55.0f, { 0.3f, 1.0f, 0.3f, 1.0f }, 1.0f, ALIGN_CENTER);
+
+    // Loaded mods, bottom left (problems are written to mods.log).
+    if (!Mods::LoadedMods().empty() || Mods::ErrorCount() > 0) {
+        std::string line = "MODS:";
+        for (const std::string& m : Mods::LoadedMods()) {
+            std::string up = m;
+            for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
+            line += (line == "MODS:" ? " " : ", ") + up;
+        }
+        if (Mods::LoadedMods().empty()) line += " NONE LOADED";
+        FontRenderer::DrawString("Normal", line, 8.0f, 452.0f, { 0.3f, 1.0f, 0.3f, 0.9f });
+        if (Mods::ErrorCount() > 0) {
+            FontRenderer::DrawString("Normal", "MOD ERRORS: SEE MODS.LOG", 8.0f, 434.0f, { 1.0f, 0.3f, 0.3f, 1.0f });
+        }
+    }
 }
 
 void GameEngine::RenderMissionSelect() {
