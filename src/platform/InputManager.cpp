@@ -111,6 +111,11 @@ void InputManager::Update() {
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) {
             sState.quitRequested = true;
+        } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F11 && !event.key.repeat) {
+            // F11 toggles fullscreen (as in the Tanks recomp); the frame stays letterboxed.
+            if (SDL_Window* win = SDL_GetWindowFromID(event.key.windowID)) {
+                SDL_SetWindowFullscreen(win, (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN) == 0);
+            }
         } else if (event.type == SDL_EVENT_GAMEPAD_ADDED && !sController) {
             sController = SDL_OpenGamepad(event.gdevice.which);
         } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED && sController &&

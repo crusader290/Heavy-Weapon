@@ -2,6 +2,7 @@
 #include "Vfs.h"
 #include "InputManager.h"
 #include "ModSystem.h"
+#include "FlashMovie.h"
 #include "Perf.h"
 #include "game/Bosses.h"
 #include <cmath>
@@ -222,12 +223,39 @@ bool GameEngine::Init(SDL_Window* window, const LaunchOptions& opts) {
     } else if (opts.startState == "armory") {
         mUpgradePoints = 3;
         mState = STATE_ARMORY;
+    } else if (opts.startState == "middle" || opts.startState == "final") {
+        AudioSystem::FadeInSong(SONG_GAMEOVER);
+        StartMovie(opts.startState == "middle" ? MOVIE_MIDDLE : MOVIE_FINAL, STATE_TITLE);
+    } else if (opts.startState.empty() || opts.startState == "intro") {
+        StartMovie(MOVIE_INTRO, STATE_TITLE);   // the original's intro screen (0x42e220)
     }
 
     // The original's intro screen plays LoveTheme once; the menus then fade in their own
     // section of AtomicTank.mo3 (UpdateMenuMusic).
-    if (mState == STATE_TITLE) AudioSystem::PlaySong(SONG_LOVETHEME, true);
+    if (mState == STATE_TITLE || (mState == STATE_MOVIE && mMovie == MOVIE_INTRO)) {
+        AudioSystem::PlaySong(SONG_LOVETHEME, true);
+    }
     return true;
+}
+
+void GameEngine::StartMovie(int movie, GameState after) {
+    mAfterMovie = after;
+    if (FlashMovie::Start((MovieId)movie)) {
+        mMovie = movie;
+        mState = STATE_MOVIE;
+    } else {
+        mState = after;
+    }
+}
+
+// Any confirm / back / pause press or a click skips the movie.
+void GameEngine::UpdateMovie(float dt) {
+    const InputState& input = InputManager::GetState();
+    const bool skip = input.confirmPressed || input.cancelPressed || input.pausePressed || input.touchPressed;
+    if (skip || !FlashMovie::Update(dt)) {
+        FlashMovie::Stop();
+        mState = mAfterMovie;
+    }
 }
 
 void GameEngine::Shutdown() {
@@ -235,6 +263,7 @@ void GameEngine::Shutdown() {
     mInitialized = false;
     mBoard.reset();       // its projectiles hold mod callbacks
     Mods::Shutdown();
+    FlashMovie::Shutdown();
     AudioSystem::Shutdown();
     InputManager::Shutdown();
     TextureManager::Shutdown();
@@ -290,6 +319,7 @@ void GameEngine::Update(float dt) {
         case STATE_DEBRIEF:        UpdateDebrief(); break;
         case STATE_OPTIONS:        UpdateOptions(); break;
         case STATE_HELP:           UpdateHelp(); break;
+        case STATE_MOVIE:          UpdateMovie(dt); break;
         default: break;
     }
     UpdateMenuMusic();
@@ -623,6 +653,14 @@ void GameEngine::UpdateDebrief() {
         AudioSystem::PlaySoundId(SND_BUTTONDOWN);
         mUpgradePoints++;
         mState = STATE_ARMORY;
+        // 0x427284: after mission 9 the story continues in middle.swf, after mission 19 in
+        // final.swf, both under the game-over section of the music.
+        if (!mSurvivalMode && (mApp.mission == 8 || mApp.mission == 18)) {
+            AudioSystem::FadeOutAllSongs();
+            AudioSystem::FadeInSong(SONG_GAMEOVER);
+            if (mApp.mission == 8) StartMovie(MOVIE_MIDDLE, STATE_ARMORY);
+            else StartMovie(MOVIE_FINAL, STATE_TITLE);   // the campaign is over
+        }
     }
 }
 
@@ -770,6 +808,7 @@ void GameEngine::Render() {
         case STATE_DEBRIEF:        RenderDebrief(); break;
         case STATE_OPTIONS:        RenderOptions(); break;
         case STATE_HELP:           RenderHelp(); break;
+        case STATE_MOVIE:          FlashMovie::Draw(); break;
         default: break;
     }
 
@@ -969,9 +1008,10 @@ void GameEngine::RenderHelp() {
         { "X / N / RIGHT CLICK","NUKE" },
         { "P / ESC",            "PAUSE" },
         { "TAB",                "MUSIC ON/OFF" },
+        { "F11",                "FULLSCREEN ON/OFF" },
         { "ENTER / ESC",        "MENU: CONFIRM / BACK" },
     };
-    const float lineH = 22.0f, colKeys = 40.0f, colWhat = 270.0f;
+    const float lineH = 21.0f, colKeys = 40.0f, colWhat = 270.0f;
     float y = 88.0f;
     auto section = [&](const char* name) {
         FontRenderer::DrawString("Normal", name, colKeys, y, { 1.0f, 0.85f, 0.2f, 1.0f });

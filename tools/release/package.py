@@ -62,6 +62,7 @@ def readme(version, platform):
         "CONTROLS",
         "  Drive: A / D or arrows        Aim: mouse        Fire: left click, Ctrl, J",
         "  Nuke: right click, X, N       Pause: P / Esc    Music: Tab",
+        "  Fullscreen: F11. Enter, Esc or a click skips the intro and story movies.",
         "  Gamepads: left stick drives, right stick aims (push far to fire),",
         "  A / RB fire, Y / LB nuke, Start pause, Back music.",
         "  Button names in prompts: buttons=xbox|playstation|auto in settings.ini.",
@@ -72,7 +73,8 @@ def readme(version, platform):
         "  --no-mods turns mods off.",
         "",
         "COMMAND LINE",
-        "  --data <dir>   --scale <n>   --stretch   --buttons <xbox|playstation|auto>",
+        "  --data <dir>   --scale <n>   --size <W>x<H>   --stretch",
+        "  --buttons <xbox|playstation|auto>",
         "  --no-mods   --help",
         "",
         "LEGAL",
@@ -110,6 +112,18 @@ def collect_licenses(dst, platform, deps, openmpt_src):
     copy(os.path.join(mix, "LICENSE.txt"), "SDL3_mixer.txt")
     copy(os.path.join(mpt, "LICENSE.txt"), "libopenmpt.txt")
     copy(os.path.join(REPO, "3rdparty", "lua", "LICENSE"), "Lua.txt")
+    # The Flash runtime that plays the intro and story movies, and what it bundles.
+    fr = os.path.join(REPO, "3rdparty", "flashrt")
+    copy(os.path.join(fr, "LICENSE"), "flashrt.txt")
+    copy(os.path.join(fr, "THIRD-PARTY-LICENSES.txt"), "flashrt-notes.txt")
+    copy(os.path.join(fr, "plutovg", "LICENSE"), "PlutoVG.txt")
+    for header, name, marker in (("drmp3.h", "dr_mp3.txt", "This software is available as a choice"),
+                                 ("stb_image.h", "stb_image.txt", "This software is available under 2 licenses")):
+        src = open(os.path.join(fr, "third_party", header), encoding="utf-8", errors="replace").read()
+        if marker not in src:
+            sys.exit(f"no license text in {header}")
+        with open(os.path.join(dst, name), "w", encoding="utf-8") as f:
+            f.write(src[src.rfind(marker):].replace("*/", "").strip() + "\n")
     with open(os.path.join(dst, "tinyxml2.txt"), "w", encoding="utf-8") as f:
         f.write(tinyxml2_license())
 

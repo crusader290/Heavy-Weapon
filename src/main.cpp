@@ -3,6 +3,9 @@
 #include "GLPlatform.h"
 #include "Constants.h"
 #include "GameEngine.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -35,7 +38,8 @@ static void AttachParentConsole() {
 static void PrintUsage() {
     std::cout <<
         "Usage: heavyweapon [options]\n"
-        "  --state <title|map|play|survival|armory|options|help>  start on this screen\n"
+        "  --state <title|map|play|survival|armory|options|help|intro|middle|final>\n"
+        "                                   start on this screen or movie (default: the intro)\n"
         "  --level <n>                      mission index (0-based) for map/play\n"
         "  --frames <n>                     quit after n frames (fixed 60 Hz timestep)\n"
         "  --screenshot <file.png>          save the final 640x480 frame (needs --frames)\n"
@@ -44,13 +48,21 @@ static void PrintUsage() {
         "  --god                            the tank cannot be destroyed (testing)\n"
         "  --armory <n>                     all armory weapons and spread at level n (testing)\n"
         "  --progress <n>                   start the level at progress n (n < 0: that many ticks before the end)\n"
-        "  --scale <n>                      initial window size as a multiple of 640x480\n"
+        "  --scale <n>                      window size as a multiple of 640x480 (e.g. 1.5)\n"
+        "  --size <W>x<H>                   window size in pixels\n"
+        "                                   (default: the largest half-step multiple of 640x480 that\n"
+        "                                   fits 90% of the desktop; F11 toggles fullscreen)\n"
         "  --data <dir>                     game data directory (Images/, Sounds/, data/, ...)\n"
         "  --buttons <xbox|playstation|auto>  gamepad button names in prompts (default: settings.ini)\n"
         "  --no-mods                        do not load anything from the mods folder\n";
 }
 
-static bool ParseArgs(int argc, char* argv[], HeavyWeapon::LaunchOptions& opts, int& windowScale) {
+struct WindowSize {
+    double scale = 0.0;   // --scale; 0: not given
+    int w = 0, h = 0;     // --size; 0: not given
+};
+
+static bool ParseArgs(int argc, char* argv[], HeavyWeapon::LaunchOptions& opts, WindowSize& win) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         bool hasValue = i + 1 < argc;
@@ -66,7 +78,13 @@ static bool ParseArgs(int argc, char* argv[], HeavyWeapon::LaunchOptions& opts, 
         else if (a == "--data" && hasValue) opts.dataPath = argv[++i];
         else if (a == "--buttons" && hasValue) opts.buttons = argv[++i];
         else if (a == "--no-mods") opts.noMods = true;
-        else if (a == "--scale" && hasValue) windowScale = std::max(1, std::atoi(argv[++i]));
+        else if (a == "--scale" && hasValue) win.scale = std::max(0.5, std::atof(argv[++i]));
+        else if (a == "--size" && hasValue) {
+            if (std::sscanf(argv[++i], "%dx%d", &win.w, &win.h) != 2 || win.w <= 0 || win.h <= 0) {
+                std::cerr << "--size expects WxH, e.g. 1280x960\n";
+                return false;
+            }
+        }
         else if (a == "--help" || a == "-h") { PrintUsage(); return false; }
         else { std::cerr << "Unknown argument: " << a << "\n"; PrintUsage(); return false; }
     }
@@ -78,8 +96,8 @@ int main(int argc, char* argv[]) {
     AttachParentConsole();
 #endif
     HeavyWeapon::LaunchOptions opts;
-    int windowScale = 2;
-    if (!ParseArgs(argc, argv, opts, windowScale)) {
+    WindowSize winSize;
+    if (!ParseArgs(argc, argv, opts, winSize)) {
         return 1;
     }
 
@@ -97,11 +115,35 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
-    int winW = HeavyWeapon::SCREEN_WIDTH * windowScale;
-    int winH = HeavyWeapon::SCREEN_HEIGHT * windowScale;
+    // Window size as in the Tanks recomp: by default the largest half-step multiple of the
+    // 640x480 frame that fits 90% of the primary display's usable area (at least 1x).
+    const int baseW = HeavyWeapon::SCREEN_WIDTH, baseH = HeavyWeapon::SCREEN_HEIGHT;
+    int winW = winSize.w, winH = winSize.h;
+    if (winW <= 0 || winH <= 0) {
+        double sc = winSize.scale;
+        if (sc <= 0.0) {
+            sc = 1.0;
+            SDL_Rect ub;
+            if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &ub) && ub.w > 0 && ub.h > 0) {
+                const double fit = std::min(ub.w * 0.9 / baseW, ub.h * 0.9 / baseH);
+                sc = std::max(1.0, std::floor(fit * 2.0) / 2.0);
+            }
+        }
+        winW = (int)std::lround(baseW * sc);
+        winH = (int)std::lround(baseH * sc);
+    }
     SDL_WindowFlags winFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
     SDL_Window* window = SDL_CreateWindow("Heavy Weapon Deluxe", winW, winH, winFlags);
+    if (window) {
+        // Resizing keeps 4:3 (unless --stretch asks to fill any shape), down to half size.
+        if (!opts.stretch) {
+            const float aspect = (float)baseW / (float)baseH;
+            SDL_SetWindowAspectRatio(window, aspect, aspect);
+        }
+        SDL_SetWindowMinimumSize(window, baseW / 2, baseH / 2);
+        std::cout << "Window " << winW << "x" << winH << std::endl;
+    }
 
     if (!window) {
         std::cerr << "Failed to create SDL window: " << SDL_GetError() << std::endl;

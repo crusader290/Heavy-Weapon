@@ -45,3 +45,4 @@ perf.log
 settings.ini
 sdlaudio.raw
 mods.log
+__pycache__/

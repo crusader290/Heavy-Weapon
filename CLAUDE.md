@@ -6,8 +6,9 @@ the current state of the work and open items.
 ## What this is
 
 A native C++17 source port of PopCap's *Heavy Weapon Deluxe* for **Windows x64** and
-**Linux x64**, on **SDL3 + SDL3_image + SDL3_mixer**, **libopenmpt** (the MO3 music) and
-fixed-function (legacy) OpenGL.
+**Linux x64**, on **SDL3 + SDL3_image + SDL3_mixer**, **libopenmpt** (the MO3 music),
+fixed-function (legacy) OpenGL, and the Tanks recomp's Flash runtime (`3rdparty/flashrt`,
+the intro and story movies).
 It started as a PS Vita port. All Vita code, assets and build targets have been removed;
 don't reintroduce them.
 
@@ -17,7 +18,8 @@ the original unless asked otherwise, and keep those references when editing.
 
 ## Hard rules
 
-- **Never commit game assets.** The data (`data/`, `Fonts/`, `Images/`, `Music/`,
+- **Never commit game assets**, nor the C++ translated from the game's SWFs
+  (`build*/flashgen/`). The data (`data/`, `Fonts/`, `Images/`, `Music/`,
   `Sounds/`) is the user's own copy. It lives outside the repo or in the ignored
   `Heavy Weapon Deluxe/` folder. Also never commit `*.exe`, `*.dll`, build folders or
   `settings.ini`.
@@ -52,7 +54,7 @@ docker build -t heavyweapon-linux -f tools\linux\Containerfile tools\linux
 docker run --rm -v "${PWD}:/src" -w /src heavyweapon-linux bash -c "cmake --preset linux-x64 && cmake --build --preset linux-x64 -j"
 ```
 
-CMake options: `HW_DATA_DIR` (default data dir), `HW_PERF` (perf.log profiler),
+CMake options: `HW_DATA_DIR` (default data dir), `HW_FLASH_SWF_DIR` (the SWFs to translate), `HW_PERF` (perf.log profiler),
 `HW_BUNDLE_SDL` / `HW_BUNDLE_OPENMPT` (Linux), `HW_OPENMPT_VERSION`, `HW_SDL3_VERSION` / `HW_SDL3_IMAGE_VERSION` / `HW_SDL3_MIXER_VERSION`.
 
 ## Verifying changes
@@ -87,6 +89,7 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
 | `src/platform/AudioSystem.cpp` | SDL3_mixer: 32-track SFX pool emulating SDL2_mixer channels; songs (one track + one libopenmpt instance each) |
 | `src/platform/Vfs.cpp` | Case-insensitive data lookup over search paths (memoised) |
 | `src/render/` | GL renderer (640×480 FBO scaled to window), textures + PopCap alpha masks, fonts, parallax |
+| `src/render/FlashMovie.cpp` | Plays intro/middle/final.swf via `3rdparty/flashrt` (translated at build time) |
 | `src/mods/ModSystem.cpp` | Mods: discovery, asset overrides, Lua sandbox, `hw.*` API, custom projectiles, ability HUD |
 | `src/loader/XmlLoader.cpp` | Parses the game's XML (levels, waves, craft, bosses) via tinyxml2 |
 | `include/Constants.h` | Screen size, timestep, feature switches (`kDecorativeAnims`) |
@@ -132,6 +135,13 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
 - **Testing mods:** run with a working directory that contains a `mods/` folder (e.g. in
   the scratchpad), so nothing is written into the user's game folder. `mods.log` lands in
   that working directory.
+- **Flash movies:** `3rdparty/flashrt` is vendored from https://github.com/crusader290/Tanks
+  (`UPSTREAM_COMMIT`); keep its local patches listed in its `THIRD-PARTY-LICENSES.txt`.
+  The build needs Python 3 and the SWFs (`HW_FLASH_SWF_DIR`); without them it links empty
+  script tables. One movie at a time: `FlashMovie::Start` sets `fl::g_code` and calls
+  `movieReset()` before `g_movie.load`. Docker builds must mount the game's `Images/`.
+- **Window size** follows the Tanks recomp (`main.cpp`): largest half-step multiple of
+  640×480 within 90% of the usable desktop, 4:3 aspect lock, F11 fullscreen.
 - The boss warning (`Board::UpdateBossWarning`, 0x40e800) is what starts the boss music.
   Nukes are refused while it runs.
 - The in-game help screen (`GameEngine::RenderHelp`) mirrors the bindings in

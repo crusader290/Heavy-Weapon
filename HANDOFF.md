@@ -1,6 +1,6 @@
 # Handoff
 
-State of the project as of **2026-11-10**, for whoever (human or agent) picks it up next.
+State of the project as of **2026-11-11**, for whoever (human or agent) picks it up next.
 `CLAUDE.md` has the build commands, verification workflow and code map.
 
 ## Where things stand
@@ -10,7 +10,38 @@ The game is a working native desktop port for **Windows x64** (MSVC) and **Linux
 The full soundtrack and the ambient scenery animations work. The PS Vita target it came
 from has been removed completely: code paths, LiveArea assets, VitaSDK build and docs.
 
-### Latest round: mod support
+### Latest round: Flash movies and window size
+
+1. **Intro and story movies** (`Images/intro.swf`, `middle.swf`, `final.swf`) play through
+   the native Flash runtime of the Tanks recomp (https://github.com/crusader290/Tanks,
+   MIT, forked from IsaacRecomp), vendored in `3rdparty/flashrt` (see its
+   `UPSTREAM_COMMIT` and `THIRD-PARTY-LICENSES.txt`).
+   - At build time `tools/gen.py` translates each movie's ActionScript (stop / play /
+     gotoFrame / `_quality`, 17 blocks in all) to C++ in `build*/flashgen/<movie>`, from the
+     SWFs in `HW_FLASH_SWF_DIR` (default `<HW_DATA_DIR>/Images`, then the repo's ignored
+     `Heavy Weapon Deluxe/Images`). It is never committed. Without the SWFs a stub table
+     is linked and the movies play without their scripts.
+   - `src/render/FlashMovie.cpp` runs the timeline at the movie's 12 fps, rasterizes the
+     display list with PlutoVG into a 640x480 buffer and draws it as a GL texture.
+     `STATE_MOVIE` in `GameEngine` plays it; confirm / back / pause or a click skips.
+   - Cues from the exe: the intro is the startup screen (0x42e220) with LoveTheme; the
+     debriefing's continue (0x427284) plays `middle.swf` after mission 9 (index 8, then
+     the armory) and `final.swf` after mission 19 (index 18, then the title), both under
+     song 5. `--state intro|middle|final` jumps there.
+   - Runtime patches (swfload.cpp, display.h, tools/swf.py) are listed in
+     `3rdparty/flashrt/THIRD-PARTY-LICENSES.txt`.
+2. **Window size as in Tanks:** the largest half-step multiple of 640x480 that fits 90% of
+   the primary display's usable bounds (at least 1x), 4:3 locked while resizing (not with
+   `--stretch`), minimum 320x240, F11 toggles fullscreen. `--scale <n>` (fractional) and
+   `--size WxH` override it. The chosen size is logged as `Window WxH`.
+
+Verified: Windows and Linux (Fedora container, Xvfb) builds translate all three movies;
+frames from each movie render the same on both; the intro ends on the title screen;
+`--scale 1.5` / `--size 800x600` / the default (1600x1200 on the dev desktop, 1280x960 on
+a 1920x1080 Xvfb screen) open the expected sizes. Not tried: F11 and resizing by hand,
+skipping with a real gamepad.
+
+### Previous round: mod support
 
 Lua 5.4.9 is vendored in `3rdparty/lua`, built from only the core and pure libraries. Mods
 are folders in `mods/` with a `mod.lua`; the guide is `docs/MODDING.md`.
@@ -51,7 +82,7 @@ Verified on Windows and Linux with test mods:
 Not tried: real gamepad buttons and triggers for abilities, or a bigger third-party-style
 mod.
 
-### Previous round: music and scenery animations
+### Earlier round: music and scenery animations
 
 Both were mapped from the original exe (see "Reading the original executable" in
 `CLAUDE.md`), not guessed.
@@ -159,8 +190,6 @@ Both were mapped from the original exe (see "Reading the original executable" in
 - **Boss warning visuals:** only the red pulse is drawn. The original (0x40e920) also
   draws six animated hazard stripes, a per-mission boss picture (table at 0x52aef8) and
   typewriter briefing text ("ENCOUNTERED: ..." strings near 0x52b05c).
-- **Intro / story screens:** `intro.swf`, `middle.swf` and `final.swf` aren't implemented.
-  The original also plays song 5 under the story cutscenes.
 - **Detail setting:** the original skips background-plane anims when `app+0xb28` is
   non-zero (likely a low-detail option); the port always draws them.
 - **Heroes** menu entry plays a "denied" sound. It isn't implemented.

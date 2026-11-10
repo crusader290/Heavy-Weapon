@@ -39,6 +39,7 @@ set(SOURCES
     src/game/Weapons.cpp
     src/game/Bosses.cpp
     src/mods/ModSystem.cpp
+    src/render/FlashMovie.cpp
     3rdparty/tinyxml2/tinyxml2.cpp
 )
 
@@ -239,6 +240,91 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# Flash movies: the intro and the two story cutscenes (Images/intro.swf, middle.swf,
+# final.swf). 3rdparty/flashrt is the native Flash player runtime from the Tanks recomp:
+# its translator turns each movie's ActionScript into C++ at build time (from the user's
+# own SWFs, never committed) and the runtime plays the timeline and rasterizes it.
+# ---------------------------------------------------------------------------
+set(_hw_swf_default "")
+if(HW_DATA_DIR)
+    set(_hw_swf_default "${HW_DATA_DIR}/Images")
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Heavy Weapon Deluxe/Images/intro.swf")
+    set(_hw_swf_default "${CMAKE_CURRENT_SOURCE_DIR}/Heavy Weapon Deluxe/Images")
+endif()
+set(HW_FLASH_SWF_DIR "${_hw_swf_default}" CACHE PATH
+    "Folder with the game's intro.swf / middle.swf / final.swf, translated at build time")
+find_package(Python3 COMPONENTS Interpreter)
+set(_fr ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/flashrt)
+
+file(GLOB _plutovg_src ${_fr}/plutovg/source/*.c)
+add_library(hw_plutovg STATIC ${_plutovg_src})
+target_include_directories(hw_plutovg PUBLIC ${_fr}/plutovg/include)
+target_compile_definitions(hw_plutovg PUBLIC PLUTOVG_BUILD_STATIC)
+set_target_properties(hw_plutovg PROPERTIES C_STANDARD 11)
+if(MSVC)
+    # The recomp's PlutoVG fork and raster.cpp use GCC's __thread for per-thread state.
+    target_compile_definitions(hw_plutovg PUBLIC "__thread=__declspec(thread)")
+endif()
+
+add_library(hw_flashrt STATIC
+    ${_fr}/rt/core.cpp ${_fr}/rt/builtins.cpp ${_fr}/rt/display.cpp ${_fr}/rt/swfload.cpp
+    ${_fr}/rt/audio.cpp ${_fr}/rt/raster.cpp ${_fr}/rt/snapshot.cpp ${_fr}/rt/platform.cpp)
+target_include_directories(hw_flashrt PUBLIC ${_fr}/rt PRIVATE ${_fr})
+target_compile_features(hw_flashrt PUBLIC cxx_std_20)
+target_link_libraries(hw_flashrt PUBLIC hw_plutovg SDL3::SDL3)
+foreach(_t hw_plutovg hw_flashrt)
+    if(MSVC)
+        target_compile_options(${_t} PRIVATE /W0 /utf-8)
+    else()
+        target_compile_options(${_t} PRIVATE -w -fno-strict-aliasing)
+    endif()
+endforeach()
+
+set(_hw_movies "")
+foreach(_mv intro middle final)
+    set(_swf "${HW_FLASH_SWF_DIR}/${_mv}.swf")
+    set(_gen "${CMAKE_BINARY_DIR}/flashgen/${_mv}")
+    if(HW_FLASH_SWF_DIR AND EXISTS "${_swf}" AND Python3_FOUND)
+        file(GLOB _tools ${_fr}/tools/*.py)
+        add_custom_command(
+            OUTPUT "${_gen}/gen.stamp" "${_gen}/gen_atoms.cpp" "${_gen}/gen_tables.cpp"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${_gen}"
+            COMMAND Python3::Interpreter -I -B "${_fr}/tools/gen.py" "${_swf}" "${_gen}" --ns mv_${_mv} --title ${_mv}
+            COMMAND ${CMAKE_COMMAND} -E touch "${_gen}/gen.stamp"
+            DEPENDS "${_swf}" ${_tools}
+            COMMENT "Translating the ActionScript of ${_mv}.swf to C++")
+        # The number of gen_N.cpp files depends on the movie: compile them through unity files.
+        set(_units "")
+        foreach(_i RANGE 0 3)
+            set(_u "${CMAKE_BINARY_DIR}/flashgen/${_mv}_unit_${_i}.cpp")
+            file(WRITE "${_u}.in" "#if __has_include(\"gen_${_i}.cpp\")\n#include \"gen_${_i}.cpp\"\n#endif\n")
+            configure_file("${_u}.in" "${_u}" COPYONLY)
+            set_source_files_properties("${_u}" PROPERTIES OBJECT_DEPENDS "${_gen}/gen.stamp")
+            list(APPEND _units "${_u}")
+        endforeach()
+        add_library(hw_movie_${_mv} STATIC ${_units} "${_gen}/gen_atoms.cpp" "${_gen}/gen_tables.cpp")
+        target_include_directories(hw_movie_${_mv} PRIVATE "${_gen}")
+        message(STATUS "Flash movie ${_mv}: translating ${_swf}")
+    else()
+        # No SWF at build time: an empty script table. The movie still plays (if the player has
+        # the file at run time), just without its timeline scripts.
+        set(_stub "${CMAKE_BINARY_DIR}/flashgen/${_mv}_stub.cpp")
+        file(WRITE "${_stub}"
+            "#include \"genrt.h\"\nnamespace fl {\nstatic void mv_${_mv}_noAtoms() {}\n"
+            "extern const GameCode g_code_mv_${_mv} = {\"mv_${_mv}\", \"${_mv}\", nullptr, 0, nullptr, 0, 640, 480, 12.0f, mv_${_mv}_noAtoms, nullptr, 0};\n}\n")
+        add_library(hw_movie_${_mv} STATIC "${_stub}")
+        message(STATUS "Flash movie ${_mv}: ${_mv}.swf not found at build time (HW_FLASH_SWF_DIR), its scripts are left out")
+    endif()
+    target_link_libraries(hw_movie_${_mv} PRIVATE hw_flashrt)
+    if(MSVC)
+        target_compile_options(hw_movie_${_mv} PRIVATE /W0 /utf-8 /bigobj)
+    else()
+        target_compile_options(hw_movie_${_mv} PRIVATE -w -fno-strict-aliasing -O1)
+    endif()
+    list(APPEND _hw_movies hw_movie_${_mv})
+endforeach()
+
+# ---------------------------------------------------------------------------
 # Game
 # ---------------------------------------------------------------------------
 add_executable(heavyweapon WIN32 ${SOURCES})
@@ -247,7 +333,8 @@ target_include_directories(heavyweapon PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tinyxml2)
 target_link_libraries(heavyweapon PRIVATE
-    SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer SDL3::SDL3 hw_openmpt hw_lua OpenGL::GL)
+    SDL3_image::SDL3_image SDL3_mixer::SDL3_mixer SDL3::SDL3 hw_openmpt hw_lua
+    hw_flashrt ${_hw_movies} OpenGL::GL)
 if(HW_PERF)
     target_compile_definitions(heavyweapon PRIVATE HW_PERF)
 endif()

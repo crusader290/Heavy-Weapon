@@ -4,7 +4,11 @@ A native source port of PopCap's arcade tank shooter **Heavy Weapon Deluxe** for
 **Windows x64** and **Linux x64**, written in C++17 on **SDL3** and OpenGL.
 
 The game renders at its original 640×480 into an offscreen target, then scales that frame
-to the window, either at 4:3 with black bars or stretched to fill.
+to the window, either at 4:3 with black bars or stretched to fill. The window opens at the
+largest half-step multiple of 640×480 that fits 90% of the desktop above the taskbar
+(1366×768 → 1×, 1920×1080 → 1.5×, 2560×1440 → 2.5×, 3840×2160 → 3.5×; less with
+Windows display scaling),
+resizes at 4:3, and F11 switches to fullscreen.
 
 | Title | Mission map |
 | :---: | :---: |
@@ -33,6 +37,10 @@ to the window, either at 4:3 with black bars or stretched to fill.
   sections, cued like the original: menus, missions, a boss theme after the siren warning,
   the debriefing and game over. `LoveTheme.ogg` plays once at startup. Songs cross-fade,
   and there is a music toggle.
+- **Intro and story movies:** `intro.swf` at startup and the cutscenes after missions 9
+  and 19 (`middle.swf`, `final.swf`) play through the native Flash runtime of the
+  [Tanks recomp](https://github.com/crusader290/Tanks). Their ActionScript is translated
+  to C++ at build time from your own copy of the game. Enter, Esc or a click skips them.
 - **Sound effects** through SDL3_mixer, with the original's stereo panning.
 - **No load hitches:** every sprite and sound is preloaded at startup, behind a progress bar.
 - **Mods:** Lua scripts can add pickups, abilities and projectiles, tweak the original
@@ -72,6 +80,7 @@ The game looks for data in this order and uses the first match:
 
 - **Visual Studio 2022** or the **Build Tools for Visual Studio 2022**, with the
   *Desktop development with C++* workload, which includes MSVC, CMake and Ninja.
+- **Python 3** (on `PATH`), to translate the movies' ActionScript at build time.
 - An internet connection on the first build. SDL3 3.4.20, SDL3_image 3.4.8 and
   SDL3_mixer 3.2.4 are downloaded from the official [libsdl-org](https://github.com/libsdl-org)
   release packages, and libopenmpt 0.8.10 from [lib.openmpt.org](https://lib.openmpt.org),
@@ -85,6 +94,12 @@ tools\windows\build.cmd
 
 This finds Visual Studio, sets up the x64 compiler, and builds `build-windows\heavyweapon.exe`.
 It also copies the SDL3 and libopenmpt DLLs next to the exe.
+
+The intro and story movies need the game's `Images/intro.swf`, `middle.swf` and
+`final.swf` at build time (on Linux too). CMake looks in `<HW_DATA_DIR>/Images`, then in
+the ignored `Heavy Weapon Deluxe/Images` folder of the repo; or set
+`-DHW_FLASH_SWF_DIR=<folder>`. Without them the movies still play, but without their
+timeline scripts.
 
 To build in a default data folder so the exe can be run from anywhere:
 
@@ -116,7 +131,8 @@ one folder, with the game data folders next to them.
 
 ### Requirements
 
-A C++17 compiler, CMake 3.24 or newer, and OpenGL development files. For SDL3 and
+A C++17 compiler (C++20 for the Flash runtime), CMake 3.24 or newer, Python 3 and
+OpenGL development files. For SDL3 and
 libopenmpt you can use either option:
 
 - **Distribution packages**, if they're new enough (SDL3 ≥ 3.2, SDL3_image ≥ 3.2,
@@ -167,6 +183,7 @@ needs Podman or Docker. It expects the game data in `Heavy Weapon Deluxe/` at th
 | Nuke | Right click, X, N | Y, LB | — |
 | Pause | P, Esc | Start | — |
 | Music on / off | Tab | Back | — |
+| Fullscreen on / off | F11 | — | — |
 | Menu confirm / back | Enter, Space / Esc, Backspace | A / B | Tap |
 
 On-screen prompts name the gamepad buttons Xbox-style by default. To use PlayStation names
@@ -201,9 +218,10 @@ Guide and API reference: [docs/MODDING.md](docs/MODDING.md).
 | `--data <dir>` | Game data directory, searched first |
 | `--buttons <xbox\|playstation\|auto>` | Gamepad button names in prompts for this run (overrides `settings.ini`) |
 | `--no-mods` | Don't load anything from the `mods` folder |
-| `--scale <n>` | Initial window size as a multiple of 640×480 (default 2) |
+| `--scale <n>` | Window size as a multiple of 640×480, e.g. `1.5` (default: fit the desktop) |
+| `--size <W>x<H>` | Window size in pixels |
 | `--stretch` | Fill the window instead of keeping 4:3 |
-| `--state <title\|map\|play\|survival\|armory\|options\|help>` | Screen to start on |
+| `--state <title\|map\|play\|survival\|armory\|options\|help\|intro\|middle\|final>` | Screen or movie to start on (default: the intro) |
 | `--level <n>` | Mission index (0-based) for `map` / `play` |
 | `--frames <n>` | Quit after *n* frames at a fixed 60 Hz |
 | `--screenshot <file.png>` | Save the last 640×480 frame (with `--frames`) |
@@ -218,12 +236,12 @@ Example: `heavyweapon --state play --level 4 --frames 600 --screenshot level5.pn
 ```
 src/core/       game loop, state machine, menus, optional profiler (HW_PERF)
 src/game/       board, player tank, enemies, bosses, weapons, supplies, effects
-src/render/     GL renderer, textures and alpha masks, bitmap fonts, parallax
+src/render/     GL renderer, textures and alpha masks, bitmap fonts, parallax, Flash movies
 src/platform/   case-insensitive file lookup, audio (SDL3_mixer + libopenmpt), input
 src/mods/       mod loader, Lua sandbox and the hw.* API
 src/loader/     XML data loading
 include/        headers
-3rdparty/       tinyxml2, Lua 5.4
+3rdparty/       tinyxml2, Lua 5.4, flashrt (Flash runtime + translator, PlutoVG)
 docs/           MODDING.md (mod guide and API reference)
 tools/windows/  Windows build script
 tools/linux/    Linux container build / run / screenshot script
@@ -235,7 +253,6 @@ tools/linux/    Linux container build / run / screenshot script
 
 - The boss warning only pulses the screen red with its siren. The original also drew hazard
   stripes, a boss picture and a typed-out briefing.
-- The intro movie screens (`intro.swf`, story `.swf` cutscenes) aren't implemented.
 
 ---
 
@@ -246,6 +263,10 @@ tools/linux/    Linux container build / run / screenshot script
   turned it into a Windows/Linux desktop port on SDL3.
 - Music playback by [libopenmpt](https://lib.openmpt.org/libopenmpt/) (BSD-3-Clause).
 - Mod scripting by [Lua](https://www.lua.org) 5.4 (MIT), vendored in `3rdparty/lua`.
+- Flash movie playback by the runtime and translator of the
+  [Tanks recomp](https://github.com/crusader290/Tanks), forked from
+  [IsaacRecomp](https://github.com/whylurking/IsaacRecomp) (MIT), with
+  [PlutoVG](https://github.com/sammycage/plutovg) (MIT), vendored in `3rdparty/flashrt`.
 - *Heavy Weapon Deluxe* is © 2005 PopCap Games, Inc. / Electronic Arts. This project is
   not affiliated with or endorsed by them.
 - This repository contains no copyrighted game assets, music, or binaries. It is a fan

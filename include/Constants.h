@@ -68,7 +68,8 @@ enum GameState {
     STATE_VICTORY,
     STATE_DEBRIEF,
     STATE_OPTIONS,
-    STATE_HELP
+    STATE_HELP,
+    STATE_MOVIE         // a Flash movie (intro, story cutscenes)
 };
 
 } // namespace HeavyWeapon

@@ -81,6 +81,8 @@ private:
 
     // Menu & UI State
     GameState mPrevState = STATE_BOOT;
+    int mMovie = 0;                       // MovieId playing in STATE_MOVIE
+    GameState mAfterMovie = STATE_TITLE;
     int mMenuSelection = 0;
     int mOptionsSelection = 0;
     int mArmorySelection = 0;
@@ -96,6 +98,9 @@ private:
     void UpdateGameOver(float dt);
     void UpdateOptions();
     void UpdateHelp();
+    // Plays a Flash movie, then goes to `after` (straight away if the movie is missing).
+    void StartMovie(int movie, GameState after);
+    void UpdateMovie(float dt);
 
     // Internal state renders
     void RenderTitle();

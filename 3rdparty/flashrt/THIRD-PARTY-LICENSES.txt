@@ -1,0 +1,21 @@
+THIRD-PARTY LICENSES
+====================
+flashrt is the Flash runtime and ActionScript translator of the Tanks recomp
+(https://github.com/crusader290/Tanks), which is forked from IsaacRecomp
+(https://github.com/whylurking/IsaacRecomp) -- MIT license, see LICENSE.
+  rt/ is its runtime (without main_sdl3.cpp) and tools/ its translator. Modified for Heavy Weapon:
+  swfload.cpp selects the movie's translated code at run time (several movies share the runtime, one at a
+  time) and can reset the loaded movie; tools/swf.py reads zlib-compressed (CWS) movies. UPSTREAM_COMMIT
+  names the Tanks commit this copy was taken from.
+
+PlutoVG (https://github.com/sammycage/plutovg) -- MIT license, Copyright (c) 2020-2025 Samuel Ugochukwu,
+  see plutovg/LICENSE. Modified upstream of this copy: bilinear texture sampling with clamped edges and a
+  "saturate" compositing operator (plutovg-blend.c).
+dr_mp3 (https://github.com/mackron/dr_libs) -- public domain (Unlicense) or MIT-0, David Reid
+  (license text at the end of third_party/drmp3.h).
+stb_image (https://github.com/nothings/stb) -- public domain or MIT, Sean Barrett
+  (license text at the end of third_party/stb_image.h).
+
+The game's movies (intro.swf, middle.swf, final.swf) are not part of this repository and are not covered
+by the licenses above. Their ActionScript is translated to C++ at build time from the user's own copy of
+the game (into the build folder, never committed), and the movies themselves are read at run time.
