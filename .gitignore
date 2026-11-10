@@ -1,0 +1,45 @@
+# Heavy Weapon Deluxe - PS Vita Port
+# Git Ignore Rules
+
+# Commercial game assets (BYOG - Bring Your Own Game)
+Heavy Weapon Deluxe/
+*.exe
+*.dll
+*.pak
+
+# Reference repositories downloaded for offline analysis
+references/
+
+# Build artifacts
+build/
+build-*/
+*.elf
+*.velf
+*.self
+*.vpk
+*.a
+*.o
+*.obj
+*.suo
+*.user
+*.pdb
+*.d
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# System and editor files
+.DS_Store
+Thumbs.db
+.directory
+.vscode/
+.idea/
+*.swp
+*~
+
+# Reverse-engineering workspace (contains extracted commercial binary)
+/re/
+/shots/
+perf.log
+settings.ini

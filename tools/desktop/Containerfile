@@ -1,0 +1,10 @@
+# Desktop (Linux) build + run environment for fast iteration without a Vita.
+# Used by tools/desktop/hw.sh; nothing here ships in the VPK.
+FROM registry.fedoraproject.org/fedora:44
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+        gcc-c++ cmake make pkgconf-pkg-config \
+        SDL2-devel SDL2_image-devel SDL2_mixer-devel libxmp pulseaudio-libs \
+        mesa-libGL-devel mesa-dri-drivers \
+        xorg-x11-server-Xvfb xorg-x11-xauth \
+    && dnf clean all
