@@ -57,6 +57,9 @@ public:
     // until it lifts and touches again.
     static void ResetTouch();
 
+    // A PlayStation (PS3/PS4/PS5) controller is the active gamepad.
+    static bool PlayStationPadConnected();
+
 private:
     static InputState sState;
     static SDL_Gamepad* sController;

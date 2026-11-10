@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ButtonLabels.h"
 #include "Constants.h"
 #include "DataModels.h"
 #include "game/AppState.h"
@@ -28,6 +29,7 @@ struct LaunchOptions {
     int startProgress = -1;      // skip ahead: level progress in ticks, or ticks before the end if negative < -1 (testing)
     int armoryLevel = 0;         // give every armory weapon (and spread) this level (testing)
     std::string dataPath;        // extra game-data directory, searched first
+    std::string buttons;         // xbox|playstation|auto for this run; "" = settings.ini
 };
 
 class GameEngine {
@@ -72,6 +74,8 @@ private:
     int mUpgradePoints = 0;
     bool mSurvivalMode = false;
     int mSurvivalTime = 0, mBestSurvival = 0;   // seconds; best is persisted in settings.ini
+    ButtonStyle mButtonStyle = ButtonStyle::Xbox;     // settings.ini buttons=, or --buttons
+    const ButtonLabels& Labels() const;   // button names for prompts (resolves auto)
     bool mSurvivalNewBest = false;
 
     // Menu & UI State

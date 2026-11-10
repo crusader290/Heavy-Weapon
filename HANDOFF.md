@@ -46,6 +46,13 @@ Both were mapped from the original exe (see "Reading the original executable" in
    (`survival_*`) and its own anims (posters, satellite dishes); before, it borrowed the
    mission's backdrop.
 
+5. **PlayStation button names kept as an option.** `include/ButtonLabels.h` holds the
+   Xbox set (default) and the original PS Vita wording (CROSS / CIRCLE / TRIANGLE / SELECT).
+   Choose with `buttons=xbox|playstation|auto` in `settings.ini` or `--buttons`; `auto`
+   uses PlayStation names while a PS3/PS4/PS5 pad is connected. Checked: help and options
+   screens render the PS text, and an unknown value logs a warning. `auto` hasn't been
+   tried with a real PlayStation pad.
+
 ### Earlier round
 
 1. **Windows x64 target.** MSVC + Ninja via `CMakePresets.json` (`windows-x64`) and

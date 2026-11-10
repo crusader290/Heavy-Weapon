@@ -15,7 +15,7 @@ namespace HeavyWeapon {
 
 GameEngine::GameEngine() {}
 
-// ---- settings.ini (music=0|1) ------------------------------------------------------
+// ---- settings.ini (music=0|1, survival_best=N, buttons=xbox|playstation|auto) -----
 static const char* kSettingsPath = "./settings.ini";
 
 // Missing or corrupt file means defaults (music on).
@@ -45,11 +45,38 @@ static int LoadBestSurvival() {
     return best;
 }
 
-static void SaveSettings(bool music, int bestSurvival) {
-    if (FILE* f = fopen(kSettingsPath, "w")) {
-        fprintf(f, "music=%d\nsurvival_best=%d\n", music ? 1 : 0, bestSurvival);
+static ButtonStyle LoadButtonSetting() {
+    ButtonStyle style = ButtonStyle::Xbox;
+    if (FILE* f = fopen(kSettingsPath, "r")) {
+        char line[128];
+        while (fgets(line, sizeof(line), f)) {
+            char name[32];
+            ButtonStyle s;
+            if (sscanf(line, " buttons = %31s", name) == 1 && ParseButtonStyle(name, s)) style = s;
+        }
         fclose(f);
     }
+    return style;
+}
+
+// The button style written back is whatever settings.ini had (a --buttons override is
+// for one run only).
+static ButtonStyle sSavedButtons = ButtonStyle::Xbox;
+
+static void SaveSettings(bool music, int bestSurvival) {
+    if (FILE* f = fopen(kSettingsPath, "w")) {
+        fprintf(f, "music=%d\nsurvival_best=%d\nbuttons=%s\n", music ? 1 : 0, bestSurvival,
+                ButtonStyleName(sSavedButtons));
+        fclose(f);
+    }
+}
+
+const ButtonLabels& GameEngine::Labels() const {
+    ButtonStyle style = mButtonStyle;
+    if (style == ButtonStyle::Auto) {
+        style = InputManager::PlayStationPadConnected() ? ButtonStyle::PlayStation : ButtonStyle::Xbox;
+    }
+    return GetButtonLabels(style);
 }
 
 void GameEngine::ToggleMusic() {
@@ -140,6 +167,11 @@ bool GameEngine::Init(SDL_Window* window, const LaunchOptions& opts) {
     AudioSystem::Init();
     AudioSystem::SetMusicEnabled(LoadMusicSetting());
     mBestSurvival = LoadBestSurvival();
+    sSavedButtons = LoadButtonSetting();
+    mButtonStyle = sSavedButtons;
+    if (!opts.buttons.empty() && !ParseButtonStyle(opts.buttons, mButtonStyle)) {
+        std::cerr << "[GameEngine] Unknown --buttons value: " << opts.buttons << " (xbox, playstation, auto)" << std::endl;
+    }
     InputManager::Init();
 
     // Load game definitions
@@ -795,7 +827,7 @@ void GameEngine::RenderMissionSelect() {
             }
         }
     }
-    FontRenderer::DrawString("Normal", "PRESS ENTER OR A TO BEGIN", SCREEN_WIDTH * 0.5f, panelY + panelH - 24.0f,
+    FontRenderer::DrawString("Normal", Labels().beginPrompt, SCREEN_WIDTH * 0.5f, panelY + panelH - 24.0f,
                              { 0.6f, 1.0f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
@@ -858,8 +890,8 @@ void GameEngine::RenderArmory() {
 void GameEngine::RenderPaused() {
     Renderer::DrawFillRect(0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT, { 0.0f, 0.0f, 0.0f, 0.65f });
     FontRenderer::DrawString("RubberStampLET42", "PAUSED", SCREEN_WIDTH * 0.5f, 210.0f, { 1.0f, 1.0f, 1.0f, 1.0f }, 1.0f, ALIGN_CENTER);
-    FontRenderer::DrawString("Normal", "P / START: RESUME    BACKSPACE / B: QUIT TO TITLE", SCREEN_WIDTH * 0.5f, 290.0f, { 0.85f, 0.85f, 0.85f, 1.0f }, 1.0f, ALIGN_CENTER);
-    std::string music = std::string(MusicLabel()) + "   (TAB / BACK)";
+    FontRenderer::DrawString("Normal", Labels().pauseHint, SCREEN_WIDTH * 0.5f, 290.0f, { 0.85f, 0.85f, 0.85f, 1.0f }, 1.0f, ALIGN_CENTER);
+    std::string music = std::string(MusicLabel()) + Labels().pauseMusicHint;
     FontRenderer::DrawString("Normal", music, SCREEN_WIDTH * 0.5f, 335.0f, { 0.85f, 0.85f, 0.85f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
@@ -882,7 +914,7 @@ void GameEngine::RenderOptions() {
         FontRenderer::DrawString("Normal", rows[i], SCREEN_WIDTH * 0.5f, kOptRowY[i] + 10.0f,
                                  sel ? Color4f{ 1.0f, 1.0f, 1.0f, 1.0f } : Color4f{ 0.7f, 0.7f, 0.7f, 1.0f }, 1.0f, ALIGN_CENTER);
     }
-    const char* hint = "ENTER/CLICK: CHANGE    ESC: BACK";
+    const char* hint = Labels().optionsHint;
     FontRenderer::DrawString("Normal", hint, SCREEN_WIDTH * 0.5f, 400.0f, { 0.6f, 0.6f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
@@ -890,14 +922,15 @@ void GameEngine::RenderOptions() {
 void GameEngine::RenderHelp() {
     DrawMenuPanelBackdrop("CONTROLS");
     struct Row { const char* keys; const char* what; };
-    static const Row kPad[] = {
+    const ButtonLabels& labels = Labels();
+    const Row kPad[] = {
         { "LEFT STICK / D-PAD", "MOVE" },
         { "RIGHT STICK",        "AIM (PUSH FAR = AUTO-FIRE)" },
-        { "A / RB",             "FIRE" },
-        { "Y / LB",             "NUKE" },
-        { "START",              "PAUSE" },
-        { "BACK",               "MUSIC ON/OFF" },
-        { "A / B",              "MENU: CONFIRM / BACK" },
+        { labels.helpFire,      "FIRE" },
+        { labels.helpNuke,      "NUKE" },
+        { labels.helpPause,     "PAUSE" },
+        { labels.helpMusic,     "MUSIC ON/OFF" },
+        { labels.helpMenu,      "MENU: CONFIRM / BACK" },
     };
     static const Row kKeys[] = {
         { "A D / ARROWS",       "MOVE" },
@@ -923,7 +956,7 @@ void GameEngine::RenderHelp() {
     y += 8.0f;
     section("GAMEPAD");
     for (const Row& r : kPad) row(r);
-    FontRenderer::DrawString("Normal", "ANY BUTTON OR CLICK: BACK", SCREEN_WIDTH * 0.5f, 448.0f, { 0.6f, 0.6f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
+    FontRenderer::DrawString("Normal", Labels().helpBackHint, SCREEN_WIDTH * 0.5f, 448.0f, { 0.6f, 0.6f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
 void GameEngine::RenderGameOver() {
@@ -945,7 +978,7 @@ void GameEngine::RenderGameOver() {
         FontRenderer::DrawString("Normal", scoreStr, SCREEN_WIDTH * 0.5f, 275.0f, { 1.0f, 1.0f, 1.0f, 1.0f }, 1.2f, ALIGN_CENTER);
     }
 
-    FontRenderer::DrawString("Computer", "PRESS ENTER TO RETURN TO HEADQUARTERS", SCREEN_WIDTH * 0.5f, 370.0f, { 1.0f, 0.9f, 0.2f, 1.0f }, 1.0f, ALIGN_CENTER);
+    FontRenderer::DrawString("Computer", Labels().gameOverPrompt, SCREEN_WIDTH * 0.5f, 370.0f, { 1.0f, 0.9f, 0.2f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
 } // namespace HeavyWeapon

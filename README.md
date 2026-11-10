@@ -167,6 +167,12 @@ needs Podman or Docker. It expects the game data in `Heavy Weapon Deluxe/` at th
 | Music on / off | Tab | Back | — |
 | Menu confirm / back | Enter, Space / Esc, Backspace | A / B | Tap |
 
+On-screen prompts name the gamepad buttons Xbox-style by default. To use PlayStation names
+(Cross, Circle, Triangle, Select), the wording of the original PS Vita port, set
+`buttons=playstation` in `settings.ini` or pass `--buttons playstation`. `buttons=auto`
+switches to PlayStation names while a PlayStation controller is connected. The buttons
+themselves work the same either way.
+
 ---
 
 ## Command-line options
@@ -174,6 +180,7 @@ needs Podman or Docker. It expects the game data in `Heavy Weapon Deluxe/` at th
 | Option | Effect |
 | :--- | :--- |
 | `--data <dir>` | Game data directory, searched first |
+| `--buttons <xbox\|playstation\|auto>` | Gamepad button names in prompts for this run (overrides `settings.ini`) |
 | `--scale <n>` | Initial window size as a multiple of 640×480 (default 2) |
 | `--stretch` | Fill the window instead of keeping 4:3 |
 | `--state <title\|map\|play\|survival\|armory\|options\|help>` | Screen to start on |

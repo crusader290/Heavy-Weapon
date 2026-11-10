@@ -121,6 +121,11 @@ heavyweapon --data <dir> --state play --level 0 --frames 400 --autofire --scale 
   Nukes are refused while it runs.
 - The in-game help screen (`GameEngine::RenderHelp`) mirrors the bindings in
   `InputManager.cpp`. Update both together, and the README controls table too.
+- **Button names** in prompts come from `include/ButtonLabels.h`, which has an Xbox set
+  (default) and a PlayStation set (the Vita port's original text, kept verbatim). Add new
+  button-naming text to both sets and read it via `GameEngine::Labels()`; don't hardcode
+  it. The style comes from `buttons=` in settings.ini or `--buttons`; `auto` follows the
+  connected pad's type.
 
 ## Repo
 

@@ -55,6 +55,18 @@ static int CountTouchFingers(SDL_TouchID id) {
     return fingers ? n : 0;
 }
 
+bool InputManager::PlayStationPadConnected() {
+    if (!sController) return false;
+    switch (SDL_GetGamepadType(sController)) {
+        case SDL_GAMEPAD_TYPE_PS3:
+        case SDL_GAMEPAD_TYPE_PS4:
+        case SDL_GAMEPAD_TYPE_PS5:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void InputManager::ResetTouch() {
     sNumFingers = 0;
     sState.fingerDown = false;
