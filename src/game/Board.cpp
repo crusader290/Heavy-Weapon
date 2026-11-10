@@ -309,7 +309,9 @@ void Board::UpdateTank() {
     if (mTread > 9.0) mTread -= 9.0;
     if (mTread < 0.0) mTread += 9.0;
 
-    if ((mMouseX > 29 && dist >= 80.0) || mTankX >= -290.0 || mDriveOverride) {
+    if (mDriveOverride && mTankX < -290.0) {
+        mTankX += std::max(speed, 2.0);   // keys/stick: still driving in after a spawn
+    } else if ((mMouseX > 29 && dist >= 80.0) || mTankX >= -290.0 || mDriveOverride) {
         mTankX += speed;
         if (mTankX < -290.0 && speed < 0.0) mTankX = -290.0;
         if (mTankX > 290.0) mTankX = 290.0;

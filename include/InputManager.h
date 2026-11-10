@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 namespace HeavyWeapon {
 
@@ -29,15 +29,15 @@ struct InputState {
     bool pausePressed = false;
     bool confirmPressed = false;
     bool cancelPressed = false;
-    bool musicTogglePressed = false;   // SELECT on Vita, Tab on desktop
+    bool musicTogglePressed = false;   // Back/Select on a gamepad, Tab on the keyboard
 
     // Window close / app exit requested
     bool quitRequested = false;
 
-    // Touch, or the mouse on desktop. Coordinates are in logical 640x480 space.
+    // Touch screen or mouse. Coordinates are in logical 640x480 space.
     // pointerAim is set while a mouse is aiming the turret (hover, like the PC game).
     bool pointerAim = false;
-    bool touchDown = false;     // any front-panel finger down (or the left mouse button on desktop)
+    bool touchDown = false;     // any touch-screen finger down, or the left mouse button
     bool fingerDown = false;    // touchDown caused by a real finger (not the mouse)
     bool touchPressed = false;
     bool touchReleased = false;
@@ -59,7 +59,7 @@ public:
 
 private:
     static InputState sState;
-    static SDL_GameController* sController;
+    static SDL_Gamepad* sController;
     static bool sPrevFireCannon;
     static bool sPrevFireNuke;
     static bool sPrevFireMegalaser;
@@ -75,11 +75,11 @@ private:
     static bool sPrevTouch;
     static bool sMouseRightPulse;
     static bool sMouseDown;
-    // Active front-panel finger ids (SDL_FingerID); touchDown is derived from this set.
+    // Active touch-screen finger ids (SDL_FingerID); touchDown is derived from this set.
     static const int kMaxFingers = 10;
     static SDL_FingerID sFingers[kMaxFingers];
     static int sNumFingers;
-    static Uint32 sLastFingerEventMs;
+    static Uint64 sLastFingerEventMs;
     static bool sStuckLogged;
 };
 

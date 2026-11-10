@@ -32,7 +32,7 @@ struct Color4f {
 
 // How the 640x480 game frame is fitted onto the display.
 enum ScaleMode {
-    SCALE_ASPECT = 0, // 4:3, pillarboxed (725x544 on Vita)
+    SCALE_ASPECT = 0, // 4:3, pillarboxed
     SCALE_STRETCH     // fill the whole display
 };
 
@@ -51,8 +51,10 @@ public:
     // Same, for SDL window coordinates (mouse events), which differ from display
     // pixels on HiDPI desktops.
     static void WindowToLogical(float wx, float wy, float& outX, float& outY);
+    // Same, for touch coordinates normalised 0..1 over the window.
+    static void NormalizedToLogical(float nx, float ny, float& outX, float& outY);
 
-    // Writes the most recent game frame (640x480) to a PNG. Desktop only.
+    // Writes the most recent game frame (640x480) to a PNG.
     static bool SaveScreenshot(const std::string& path);
 
     static void SetAdditiveBlend(bool additive);

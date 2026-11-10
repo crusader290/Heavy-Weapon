@@ -1,18 +1,14 @@
 #include "Perf.h"
 
 #ifdef HW_PERF
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 #include <cstdarg>
 #include <cstdio>
 
 namespace HeavyWeapon {
 namespace Perf {
 
-#ifdef __vita__
-static const char* kLogPath = "ux0:data/heavyweapon/perf.log";
-#else
 static const char* kLogPath = "./perf.log";
-#endif
 
 static FILE* sFile = nullptr;
 static bool sOpened = false;

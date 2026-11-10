@@ -11,10 +11,6 @@ namespace HeavyWeapon {
 constexpr int SCREEN_WIDTH = 640;
 constexpr int SCREEN_HEIGHT = 480;
 
-// Physical PS Vita display
-constexpr int DISPLAY_WIDTH = 960;
-constexpr int DISPLAY_HEIGHT = 544;
-
 constexpr float TARGET_FPS = 60.0f;
 constexpr float FIXED_DT = 1.0f / TARGET_FPS;
 

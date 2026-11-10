@@ -1,5 +1,6 @@
 #include "AudioSystem.h"
 #include "Vfs.h"
+#include <SDL3_mixer/SDL_mixer.h>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -110,54 +111,70 @@ static const SoundMeta sSoundMetaTable[] = {
     { "speedup", 0.60f }, // 91
 };
 
-std::unordered_map<std::string, Mix_Chunk*> AudioSystem::sSounds;
+MIX_Mixer* AudioSystem::sMixer = nullptr;
+MIX_Track* AudioSystem::sTracks[AudioSystem::kNumTracks] = {};
+MIX_Track* AudioSystem::sMusicTrack = nullptr;
+std::unordered_map<std::string, MIX_Audio*> AudioSystem::sSounds;
 std::unordered_set<std::string> AudioSystem::sMissingSounds;
-Mix_Music* AudioSystem::sCurrentMusic = nullptr;
+MIX_Audio* AudioSystem::sCurrentMusic = nullptr;
 int AudioSystem::sMusicVolume = 100;
 bool AudioSystem::sMusicEnabled = true;
 std::string AudioSystem::sMusicRequest;
 bool AudioSystem::sMusicRequestLoop = true;
 int AudioSystem::sSfxVolume = 100;
 int AudioSystem::sEngineChannel = -1;
-SDL_mutex* AudioSystem::sSoundMutex = nullptr;
+SDL_Mutex* AudioSystem::sSoundMutex = nullptr;
 SDL_Thread* AudioSystem::sPreloadThread = nullptr;
 volatile int AudioSystem::sPreloadDone = 0;
 volatile int AudioSystem::sPreloadRunning = 0;
 
 namespace {
 struct SoundLock {
-    SDL_mutex* m;
-    explicit SoundLock(SDL_mutex* mu) : m(mu) { if (m) SDL_LockMutex(m); }
+    SDL_Mutex* m;
+    explicit SoundLock(SDL_Mutex* mu) : m(mu) { if (m) SDL_LockMutex(m); }
     ~SoundLock() { if (m) SDL_UnlockMutex(m); }
 };
+
+// Volumes stay on SDL2_mixer's 0..128 scale. The SDL2 build applied the SFX volume twice
+// (channel volume x chunk volume = sfx * base), so effects keep that same mix here.
+float SfxGain(int sfxVolume, float base) {
+    return (sfxVolume / 128.0f) * std::clamp((int)(sfxVolume * base), 0, 128) / 128.0f;
+}
 }
 
 void AudioSystem::Init() {
     if (!sSoundMutex) sSoundMutex = SDL_CreateMutex();
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
-        std::cerr << "[AudioSystem] Mix_OpenAudio error: " << Mix_GetError() << std::endl;
+    if (!MIX_Init()) {
+        std::cerr << "[AudioSystem] MIX_Init error: " << SDL_GetError() << std::endl;
         return;
     }
-    Mix_AllocateChannels(32);
-    Mix_Volume(-1, sSfxVolume);
-    Mix_VolumeMusic(sMusicVolume);
+    sMixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+    if (!sMixer) {
+        std::cerr << "[AudioSystem] Cannot open audio device: " << SDL_GetError() << std::endl;
+        MIX_Quit();
+        return;
+    }
+    for (MIX_Track*& t : sTracks) t = MIX_CreateTrack(sMixer);
+    sMusicTrack = MIX_CreateTrack(sMixer);
 }
 
 void AudioSystem::Shutdown() {
     FinishPreload();
     StopMusic();
-    if (sEngineChannel >= 0) {
-        Mix_HaltChannel(sEngineChannel);
-        sEngineChannel = -1;
-    }
+    sEngineChannel = -1;
+    if (sMixer) MIX_StopAllTracks(sMixer, 0);
     for (auto& pair : sSounds) {
-        if (pair.second) {
-            Mix_FreeChunk(pair.second);
-        }
+        if (pair.second) MIX_DestroyAudio(pair.second);
     }
     sSounds.clear();
     sMissingSounds.clear();
-    Mix_CloseAudio();
+    if (sMixer) {
+        MIX_DestroyMixer(sMixer);   // also destroys its tracks
+        sMixer = nullptr;
+        for (MIX_Track*& t : sTracks) t = nullptr;
+        sMusicTrack = nullptr;
+        MIX_Quit();
+    }
 }
 
 int AudioSystem::sCooldown[SND_COUNT] = {};
@@ -171,12 +188,37 @@ void AudioSystem::Tick() {
 
 // PopCap pan is DirectSound-style (hundredths of a dB, -10000..10000); the game passes
 // x * 3 for world x in -320..320, i.e. a gentle stereo spread.
-static void ApplyPan(int channel, int pan) {
+static MIX_StereoGains PanGains(int pan) {
     float t = std::clamp(pan / 10000.0f, -1.0f, 1.0f);
     float atten = std::pow(10.0f, -std::abs(t) * 100.0f / 20.0f); // dB attenuation of the far side
-    Uint8 left = (Uint8)(255 * (t > 0 ? atten : 1.0f));
-    Uint8 right = (Uint8)(255 * (t < 0 ? atten : 1.0f));
-    Mix_SetPanning(channel, left, right);
+    return { t > 0 ? atten : 1.0f, t < 0 ? atten : 1.0f };
+}
+
+bool AudioSystem::TrackBusy(int track) {
+    if (track < 0 || track >= kNumTracks || !sTracks[track]) return false;
+    return MIX_TrackPlaying(sTracks[track]) || MIX_TrackPaused(sTracks[track]);
+}
+
+void AudioSystem::HaltTrack(int track) {
+    if (track >= 0 && track < kNumTracks && sTracks[track]) MIX_StopTrack(sTracks[track], 0);
+}
+
+int AudioSystem::PlayOnFreeTrack(MIX_Audio* audio, float gain, int pan, int loops) {
+    if (!sMixer || !audio) return -1;
+    for (int i = 0; i < kNumTracks; ++i) {
+        if (!sTracks[i] || TrackBusy(i)) continue;
+        MIX_Track* t = sTracks[i];
+        MIX_SetTrackAudio(t, audio);
+        MIX_SetTrackGain(t, gain);
+        MIX_StereoGains g = PanGains(pan);
+        MIX_SetTrackStereo(t, &g);
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loops);
+        bool ok = MIX_PlayTrack(t, props);
+        SDL_DestroyProperties(props);
+        return ok ? i : -1;
+    }
+    return -1;
 }
 
 void AudioSystem::PlaySoundId(int id, int pan, float volume) {
@@ -187,36 +229,31 @@ void AudioSystem::PlaySoundId(int id, int pan, float volume) {
     sCooldown[id] = (id == SND_BIGEXPLODE || id == SND_SMALLEXPLODE) ? 20 : 10;
 
     const std::string name = sSoundMetaTable[id].name;
-    Mix_Chunk* chunk = GetChunk(name);
+    MIX_Audio* chunk = GetChunk(name);
     if (!chunk) return;
 
     float base = volume >= 0.0f ? volume : (float)sSoundMetaTable[id].defaultVolume;
-    Mix_VolumeChunk(chunk, std::clamp((int)(sSfxVolume * base), 0, 128));
-    int channel = Mix_PlayChannel(-1, chunk, 0);
-    if (channel >= 0) ApplyPan(channel, pan);
+    PlayOnFreeTrack(chunk, SfxGain(sSfxVolume, base), pan, 0);
 }
 
 void AudioSystem::SetLoop(int id, bool on, int pan) {
     if (id < 0 || id >= SND_COUNT) return;
-    int& ch = sLoopChannel[id];   // stored as channel + 1 (0 = none)
+    int& ch = sLoopChannel[id];   // stored as track + 1 (0 = none)
     if (!on) {
-        if (ch) Mix_HaltChannel(ch - 1);
+        if (ch) HaltTrack(ch - 1);
         ch = 0;
         return;
     }
-    if (ch && Mix_Playing(ch - 1)) {
-        ApplyPan(ch - 1, pan);
+    if (ch && TrackBusy(ch - 1)) {
+        MIX_StereoGains g = PanGains(pan);
+        MIX_SetTrackStereo(sTracks[ch - 1], &g);
         return;
     }
     const std::string name = sSoundMetaTable[id].name;
-    Mix_Chunk* chunk = GetChunk(name);
+    MIX_Audio* chunk = GetChunk(name);
     if (!chunk) return;
-    Mix_VolumeChunk(chunk, std::clamp((int)(sSfxVolume * sSoundMetaTable[id].defaultVolume), 0, 128));
-    int c = Mix_PlayChannel(-1, chunk, -1);
-    if (c >= 0) {
-        ApplyPan(c, pan);
-        ch = c + 1;
-    }
+    int c = PlayOnFreeTrack(chunk, SfxGain(sSfxVolume, sSoundMetaTable[id].defaultVolume), pan, -1);
+    if (c >= 0) ch = c + 1;
 }
 
 void AudioSystem::StopAllLoops() {
@@ -247,18 +284,18 @@ void AudioSystem::PreloadSound(const std::string& name) {
     std::string resolved = Vfs::Resolve(path);
     bool exists = Vfs::Exists(resolved);
     // Decode outside the lock so the main thread never waits on the worker's decoding.
-    Mix_Chunk* chunk = exists ? Mix_LoadWAV(resolved.c_str()) : nullptr;
+    MIX_Audio* chunk = (exists && sMixer) ? MIX_LoadAudio(sMixer, resolved.c_str(), true) : nullptr;
 
     SoundLock lock(sSoundMutex);
     if (chunk) {
-        if (sSounds.find(name) != sSounds.end()) Mix_FreeChunk(chunk);   // lost a race with the other thread
+        if (sSounds.find(name) != sSounds.end()) MIX_DestroyAudio(chunk);   // lost a race with the other thread
         else sSounds[name] = chunk;
     } else if (sSounds.find(name) == sSounds.end()) {
         sMissingSounds.insert(name);
     }
 }
 
-Mix_Chunk* AudioSystem::GetChunk(const std::string& name) {
+MIX_Audio* AudioSystem::GetChunk(const std::string& name) {
     {
         SoundLock lock(sSoundMutex);
         auto it = sSounds.find(name);
@@ -284,12 +321,12 @@ void AudioSystem::StartPreloadThread() {
     if (sPreloadThread) return;
     sPreloadDone = 0;
     sPreloadRunning = 1;
-    sPreloadThread = SDL_CreateThreadWithStackSize(
+    sPreloadThread = SDL_CreateThread(
         [](void*) -> int {
             PreloadAllSounds();
             sPreloadRunning = 0;
             return 0;
-        }, "SoundPreload", 512 * 1024, nullptr);
+        }, "SoundPreload", nullptr);
     if (!sPreloadThread) {   // no thread available: fall back to loading inline
         sPreloadRunning = 0;
         PreloadAllSounds();
@@ -307,31 +344,23 @@ void AudioSystem::FinishPreload() {
 }
 
 void AudioSystem::PlaySound(const std::string& name, float volumeMultiplier, int loops) {
-    Mix_Chunk* chunk = GetChunk(name);
+    MIX_Audio* chunk = GetChunk(name);
     if (chunk) {
-        float baseVol = GetDefaultVolume(name);
-        int vol = (int)(sSfxVolume * baseVol * volumeMultiplier);
-        if (vol < 0) vol = 0;
-        if (vol > 128) vol = 128;
-        Mix_VolumeChunk(chunk, vol);
-        Mix_PlayChannel(-1, chunk, loops);
+        PlayOnFreeTrack(chunk, SfxGain(sSfxVolume, GetDefaultVolume(name) * volumeMultiplier), 0, loops);
     }
 }
 
 void AudioSystem::UpdateEngineSound(bool moving) {
     if (moving) {
-        if (sEngineChannel < 0 || !Mix_Playing(sEngineChannel)) {
-            Mix_Chunk* chunk = GetChunk("diesel");
+        if (!TrackBusy(sEngineChannel)) {
+            MIX_Audio* chunk = GetChunk("diesel");
             if (chunk) {
-                Mix_VolumeChunk(chunk, (int)(sSfxVolume * 0.35f));
-                sEngineChannel = Mix_PlayChannel(-1, chunk, -1); // Loop indefinitely
+                sEngineChannel = PlayOnFreeTrack(chunk, SfxGain(sSfxVolume, 0.35f), 0, -1); // Loop indefinitely
             }
         }
-    } else {
-        if (sEngineChannel >= 0 && Mix_Playing(sEngineChannel)) {
-            Mix_HaltChannel(sEngineChannel);
-            sEngineChannel = -1;
-        }
+    } else if (TrackBusy(sEngineChannel)) {
+        HaltTrack(sEngineChannel);
+        sEngineChannel = -1;
     }
 }
 
@@ -372,39 +401,48 @@ void AudioSystem::PlayMusic(const std::string& path, bool loop) {
         return;
     }
 
-    sCurrentMusic = Mix_LoadMUS(resolved.c_str());
+    if (!sMixer || !sMusicTrack) return;
+    // Streamed rather than predecoded: music is long and only one track plays at a time.
+    sCurrentMusic = MIX_LoadAudio(sMixer, resolved.c_str(), false);
     if (sCurrentMusic) {
-        Mix_VolumeMusic(sMusicVolume);
-        Mix_PlayMusic(sCurrentMusic, loop ? -1 : 1);
+        MIX_SetTrackAudio(sMusicTrack, sCurrentMusic);
+        MIX_SetTrackGain(sMusicTrack, sMusicVolume / 128.0f);
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
+        MIX_PlayTrack(sMusicTrack, props);
+        SDL_DestroyProperties(props);
     } else {
-        std::cerr << "[AudioSystem] Failed to load music: " << Mix_GetError() << std::endl;
+        std::cerr << "[AudioSystem] Failed to load music: " << SDL_GetError() << std::endl;
     }
 }
 
 void AudioSystem::StopMusic() {
     if (sCurrentMusic) {
-        Mix_HaltMusic();
-        Mix_FreeMusic(sCurrentMusic);
+        if (sMusicTrack) {
+            MIX_StopTrack(sMusicTrack, 0);
+            MIX_SetTrackAudio(sMusicTrack, nullptr);
+        }
+        MIX_DestroyAudio(sCurrentMusic);
         sCurrentMusic = nullptr;
     }
 }
 
 void AudioSystem::PauseMusic() {
-    Mix_PauseMusic();
+    if (sMusicTrack) MIX_PauseTrack(sMusicTrack);
 }
 
 void AudioSystem::ResumeMusic() {
-    Mix_ResumeMusic();
+    if (sMusicTrack) MIX_ResumeTrack(sMusicTrack);
 }
 
 void AudioSystem::SetMusicVolume(int volume) {
     sMusicVolume = std::clamp(volume, 0, 128);
-    Mix_VolumeMusic(sMusicVolume);
+    if (sMusicTrack) MIX_SetTrackGain(sMusicTrack, sMusicVolume / 128.0f);
 }
 
 void AudioSystem::SetSfxVolume(int volume) {
+    // Applies to sounds started from now on.
     sSfxVolume = std::clamp(volume, 0, 128);
-    Mix_Volume(-1, sSfxVolume);
 }
 
 } // namespace HeavyWeapon

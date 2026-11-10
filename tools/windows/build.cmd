@@ -6,7 +6,7 @@ rem   tools\windows\build.cmd "D:\Games\Heavy Weapon Deluxe"
 rem                                                also compile in a default game-data dir
 rem
 rem Needs Visual Studio 2022 (or Build Tools) with the "Desktop development with C++"
-rem workload, which includes CMake and Ninja. SDL2/SDL2_image/SDL2_mixer are downloaded
+rem workload, which includes CMake and Ninja. SDL3/SDL3_image/SDL3_mixer are downloaded
 rem from the libsdl-org GitHub releases on first configure.
 setlocal
 set "REPO=%~dp0..\.."

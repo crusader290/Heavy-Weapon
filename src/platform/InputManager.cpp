@@ -8,7 +8,7 @@
 namespace HeavyWeapon {
 
 InputState InputManager::sState;
-SDL_GameController* InputManager::sController = nullptr;
+SDL_Gamepad* InputManager::sController = nullptr;
 bool InputManager::sPrevFireCannon = false;
 bool InputManager::sPrevFireNuke = false;
 bool InputManager::sPrevFireMegalaser = false;
@@ -26,24 +26,33 @@ bool InputManager::sMouseRightPulse = false;
 bool InputManager::sMouseDown = false;
 SDL_FingerID InputManager::sFingers[InputManager::kMaxFingers];
 int InputManager::sNumFingers = 0;
-Uint32 InputManager::sLastFingerEventMs = 0;
+Uint64 InputManager::sLastFingerEventMs = 0;
 bool InputManager::sStuckLogged = false;
 
-// Only the front (direct) touch panel counts. On Vita SDL registers the rear touchpad as a second,
-// indirect touch device; its events must never drive the tank.
+// Only direct touch (a touch screen) counts. Indirect devices such as laptop touchpads also
+// report finger events; those must never drive the tank.
 static bool IsFrontTouch(SDL_TouchID id) {
     SDL_TouchDeviceType t = SDL_GetTouchDeviceType(id);
     return t == SDL_TOUCH_DEVICE_DIRECT || t == SDL_TOUCH_DEVICE_INVALID;
 }
 
 static SDL_TouchID FrontTouchDevice(bool& found) {
-    int n = SDL_GetNumTouchDevices();
-    for (int i = 0; i < n; ++i) {
-        SDL_TouchID id = SDL_GetTouchDevice(i);
-        if (SDL_GetTouchDeviceType(id) == SDL_TOUCH_DEVICE_DIRECT) { found = true; return id; }
-    }
     found = false;
-    return 0;
+    SDL_TouchID result = 0;
+    int n = 0;
+    SDL_TouchID* ids = SDL_GetTouchDevices(&n);
+    for (int i = 0; ids && i < n; ++i) {
+        if (SDL_GetTouchDeviceType(ids[i]) == SDL_TOUCH_DEVICE_DIRECT) { found = true; result = ids[i]; break; }
+    }
+    SDL_free(ids);
+    return result;
+}
+
+static int CountTouchFingers(SDL_TouchID id) {
+    int n = 0;
+    SDL_Finger** fingers = SDL_GetTouchFingers(id, &n);
+    SDL_free(fingers);
+    return fingers ? n : 0;
 }
 
 void InputManager::ResetTouch() {
@@ -53,18 +62,18 @@ void InputManager::ResetTouch() {
 }
 
 void InputManager::Init() {
-    SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
-    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-        if (SDL_IsGameController(i)) {
-            sController = SDL_GameControllerOpen(i);
-            if (sController) break;
-        }
+    SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+    int n = 0;
+    SDL_JoystickID* pads = SDL_GetGamepads(&n);
+    for (int i = 0; pads && i < n && !sController; ++i) {
+        sController = SDL_OpenGamepad(pads[i]);
     }
+    SDL_free(pads);
 }
 
 void InputManager::Shutdown() {
     if (sController) {
-        SDL_GameControllerClose(sController);
+        SDL_CloseGamepad(sController);
         sController = nullptr;
     }
 }
@@ -88,38 +97,37 @@ void InputManager::Update() {
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_QUIT) {
+        if (event.type == SDL_EVENT_QUIT) {
             sState.quitRequested = true;
-        } else if (event.type == SDL_CONTROLLERDEVICEADDED && !sController) {
-            sController = SDL_GameControllerOpen(event.cdevice.which);
-        } else if (event.type == SDL_CONTROLLERDEVICEREMOVED && sController) {
-            SDL_GameControllerClose(sController);
+        } else if (event.type == SDL_EVENT_GAMEPAD_ADDED && !sController) {
+            sController = SDL_OpenGamepad(event.gdevice.which);
+        } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED && sController &&
+                   event.gdevice.which == SDL_GetGamepadID(sController)) {
+            SDL_CloseGamepad(sController);
             sController = nullptr;
-        } else if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION) {
-            if (!IsFrontTouch(event.tfinger.touchId)) continue;
+        } else if (event.type == SDL_EVENT_FINGER_DOWN || event.type == SDL_EVENT_FINGER_MOTION) {
+            if (!IsFrontTouch(event.tfinger.touchID)) continue;
             sLastFingerEventMs = SDL_GetTicks();
-            // Finger coordinates are normalised over the touch panel, which covers the display.
-            Renderer::DisplayToLogical(event.tfinger.x * DISPLAY_WIDTH, event.tfinger.y * DISPLAY_HEIGHT,
-                                       sState.touchX, sState.touchY);
-            if (event.type == SDL_FINGERDOWN) {
+            // Finger coordinates are normalised over the window.
+            Renderer::NormalizedToLogical(event.tfinger.x, event.tfinger.y, sState.touchX, sState.touchY);
+            if (event.type == SDL_EVENT_FINGER_DOWN) {
                 bool known = false;
-                for (int i = 0; i < sNumFingers; ++i) known |= (sFingers[i] == event.tfinger.fingerId);
-                if (!known && sNumFingers < kMaxFingers) sFingers[sNumFingers++] = event.tfinger.fingerId;
+                for (int i = 0; i < sNumFingers; ++i) known |= (sFingers[i] == event.tfinger.fingerID);
+                if (!known && sNumFingers < kMaxFingers) sFingers[sNumFingers++] = event.tfinger.fingerID;
                 sState.touchPressed = true;
             }
-        } else if (event.type == SDL_FINGERUP) {
-            if (!IsFrontTouch(event.tfinger.touchId)) continue;
+        } else if (event.type == SDL_EVENT_FINGER_UP) {
+            if (!IsFrontTouch(event.tfinger.touchID)) continue;
             sLastFingerEventMs = SDL_GetTicks();
             for (int i = 0; i < sNumFingers; ++i) {
-                if (sFingers[i] == event.tfinger.fingerId) { sFingers[i] = sFingers[--sNumFingers]; break; }
+                if (sFingers[i] == event.tfinger.fingerID) { sFingers[i] = sFingers[--sNumFingers]; break; }
             }
             sState.touchReleased = true;
-#ifndef __vita__
-        } else if (event.type == SDL_MOUSEMOTION && event.motion.which != SDL_TOUCH_MOUSEID) {
-            Renderer::WindowToLogical((float)event.motion.x, (float)event.motion.y, sState.touchX, sState.touchY);
+        } else if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.which != SDL_TOUCH_MOUSEID) {
+            Renderer::WindowToLogical(event.motion.x, event.motion.y, sState.touchX, sState.touchY);
             sState.pointerAim = true;
-        } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.which != SDL_TOUCH_MOUSEID) {
-            Renderer::WindowToLogical((float)event.button.x, (float)event.button.y, sState.touchX, sState.touchY);
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.which != SDL_TOUCH_MOUSEID) {
+            Renderer::WindowToLogical(event.button.x, event.button.y, sState.touchX, sState.touchY);
             sState.pointerAim = true;
             if (event.button.button == SDL_BUTTON_LEFT) {
                 sMouseDown = true;
@@ -127,11 +135,10 @@ void InputManager::Update() {
             } else if (event.button.button == SDL_BUTTON_RIGHT) {
                 sMouseRightPulse = true;
             }
-        } else if (event.type == SDL_MOUSEBUTTONUP && event.button.which != SDL_TOUCH_MOUSEID &&
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.which != SDL_TOUCH_MOUSEID &&
                    event.button.button == SDL_BUTTON_LEFT) {
             sMouseDown = false;
             sState.touchReleased = true;
-#endif
         }
     }
 
@@ -139,7 +146,7 @@ void InputManager::Update() {
     if (sNumFingers > 0) {
         bool found = false;
         SDL_TouchID front = FrontTouchDevice(found);
-        if (found && SDL_GetNumTouchFingers(front) == 0) sNumFingers = 0;
+        if (found && CountTouchFingers(front) == 0) sNumFingers = 0;
     }
     sState.fingerDown = sNumFingers > 0;
     sState.touchDown = sState.fingerDown || sMouseDown;
@@ -170,17 +177,17 @@ void InputManager::Update() {
 
     if (sController) {
         // Left Stick Movement
-        int16_t rawMoveX = SDL_GameControllerGetAxis(sController, SDL_CONTROLLER_AXIS_LEFTX);
+        int16_t rawMoveX = SDL_GetGamepadAxis(sController, SDL_GAMEPAD_AXIS_LEFTX);
         float normMoveX = (float)rawMoveX / 32767.0f;
         if (std::abs(normMoveX) > 0.2f) {
             moveX = normMoveX;
         }
 
         // D-Pad buttons
-        btnUp = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_DPAD_UP);
-        btnDown = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
-        btnLeft = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
-        btnRight = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+        btnUp = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_DPAD_UP);
+        btnDown = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+        btnLeft = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+        btnRight = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
 
         if (btnLeft) {
             moveX = -1.0f;
@@ -189,8 +196,8 @@ void InputManager::Update() {
         }
 
         // Right Stick Aiming
-        int16_t rawAimX = SDL_GameControllerGetAxis(sController, SDL_CONTROLLER_AXIS_RIGHTX);
-        int16_t rawAimY = SDL_GameControllerGetAxis(sController, SDL_CONTROLLER_AXIS_RIGHTY);
+        int16_t rawAimX = SDL_GetGamepadAxis(sController, SDL_GAMEPAD_AXIS_RIGHTX);
+        int16_t rawAimY = SDL_GetGamepadAxis(sController, SDL_GAMEPAD_AXIS_RIGHTY);
         float normAimX = (float)rawAimX / 32767.0f;
         float normAimY = (float)rawAimY / 32767.0f;
 
@@ -217,23 +224,22 @@ void InputManager::Update() {
         }
 
         // Action Buttons
-        btnCannon |= SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_A);
-        btnCannon |= SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+        btnCannon |= SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_SOUTH);
+        btnCannon |= SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
 
-        btnNuke = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_Y) ||
-                  SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+        btnNuke = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_NORTH) ||
+                  SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
 
-        btnLaser = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_X);
-        btnAltFire = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_Y);
-        btnPause = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_START);
-        btnConfirm = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_A);
-        btnCancel = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_B);
-        btnMusic = SDL_GameControllerGetButton(sController, SDL_CONTROLLER_BUTTON_BACK);   // SELECT
+        btnLaser = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_WEST);
+        btnAltFire = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_NORTH);
+        btnPause = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_START);
+        btnConfirm = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_SOUTH);
+        btnCancel = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_EAST);
+        btnMusic = SDL_GetGamepadButton(sController, SDL_GAMEPAD_BUTTON_BACK);   // SELECT
     }
 
-#ifndef __vita__
-    // Desktop keyboard + mouse. Mouse aims (hover) and the left button fires, as on PC.
-    const Uint8* keys = SDL_GetKeyboardState(nullptr);
+    // Keyboard + mouse. Mouse aims (hover) and the left button fires, as on PC.
+    const bool* keys = SDL_GetKeyboardState(nullptr);
     bool kLeft = keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A];
     bool kRight = keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D];
     if (kLeft != kRight) moveX = kLeft ? -1.0f : 1.0f;
@@ -252,7 +258,6 @@ void InputManager::Update() {
 
     // A gamepad or keyboard aim overrides the mouse until it moves again.
     if (std::abs(aimX) > 0.0f || std::abs(aimY) > 0.0f) sState.pointerAim = false;
-#endif
 
     sState.moveAxisX = moveX;
     sState.aimAxisX = aimX;

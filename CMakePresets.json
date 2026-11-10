@@ -14,9 +14,19 @@
         "CMAKE_CXX_COMPILER": "cl"
       },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux-x64",
+      "displayName": "Linux x64",
+      "binaryDir": "${sourceDir}/build-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     }
   ],
   "buildPresets": [
-    { "name": "windows-x64", "configurePreset": "windows-x64" }
+    { "name": "windows-x64", "configurePreset": "windows-x64" },
+    { "name": "linux-x64", "configurePreset": "linux-x64" }
   ]
 }

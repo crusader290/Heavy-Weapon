@@ -9,18 +9,14 @@
 #include <iostream>
 #include <algorithm>
 #include <sstream>
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 namespace HeavyWeapon {
 
 GameEngine::GameEngine() {}
 
 // ---- settings.ini (music=0|1) ------------------------------------------------------
-#ifdef __vita__
-static const char* kSettingsPath = "ux0:data/heavyweapon/settings.ini";
-#else
 static const char* kSettingsPath = "./settings.ini";
-#endif
 
 // Missing or corrupt file means defaults (music on).
 static bool LoadMusicSetting() {
@@ -74,7 +70,7 @@ static bool InRect(float x, float y, float rx, float ry, float rw, float rh) {
 struct LoadScreen {
     std::string backdrop;
     int texDone = 0, texTotal = 0, sndDone = 0, sndTotal = 0;
-    uint32_t lastPresent = 0;
+    Uint64 lastPresent = 0;
 
     void Draw() {
         const int total = texTotal + sndTotal;
@@ -205,9 +201,9 @@ void GameEngine::Run() {
     // With --frames the timestep is fixed so captured frames are reproducible.
     const bool fixedRun = mOpts.maxFrames > 0;
     int frame = 0;
-    uint32_t lastTicks = SDL_GetTicks();
+    Uint64 lastTicks = SDL_GetTicks();
     while (mRunning) {
-        uint32_t currentTicks = SDL_GetTicks();
+        Uint64 currentTicks = SDL_GetTicks();
         float dt = (float)(currentTicks - lastTicks) / 1000.0f;
         if (dt > 0.05f) dt = 0.05f; // Cap at 20fps minimum
         lastTicks = currentTicks;
@@ -444,21 +440,25 @@ void GameEngine::StartLevel(int levelIndex, bool survival) {
     PERF_LAP(perfTotal, "StartLevel TOTAL");
 }
 
-// Feeds input to the board the way the original's mouse handlers do: the cursor is the
-// point the tank drives toward and aims at. Gamepads aim with the right stick and drive
-// with the left stick instead.
+// Feeds input to the board. The tank drives with A/D (or the arrows, left stick, D-pad) and
+// aims at the mouse cursor or along the right stick. On a touch screen the finger is the
+// point the tank drives toward and aims at, like the original's mouse handlers.
 void GameEngine::ApplyBoardInput() {
     const InputState& input = InputManager::GetState();
     Board& board = *mBoard;
 
     bool stickAim = std::abs(input.aimAxisX) > 0.0f || std::abs(input.aimAxisY) > 0.0f;
-    // A gamepad stick/D-pad always wins over a finger on the screen (an accidental touch must not
-    // hijack the tank); touch can still fire.
+    // A gamepad stick/D-pad or the keyboard always wins over a finger on the screen (an
+    // accidental touch must not hijack the tank); touch can still fire.
     bool fingerSteers = input.fingerDown && !stickAim && std::abs(input.moveAxisX) == 0.0f;
-    bool mouseSteers = (input.touchDown && !input.fingerDown) || (input.pointerAim && !stickAim);
-    if (fingerSteers || mouseSteers) {
+    bool mouseAims = !input.fingerDown && (input.pointerAim || input.touchDown) && !stickAim;
+    if (fingerSteers) {
         board.SetTarget((int)input.touchX, (int)input.touchY);
         board.SetDriveOverride(false, 0.0f);
+    } else if (mouseAims) {
+        // The mouse only aims; driving stays on the keys.
+        board.SetTarget((int)input.touchX, (int)input.touchY);
+        board.SetDriveOverride(true, input.moveAxisX);
     } else {
         // Point the virtual cursor 200px out along the right stick (straight up when idle),
         // so the original aiming code applies unchanged.
@@ -724,7 +724,7 @@ void GameEngine::RenderTitle() {
         Renderer::SetAdditiveBlend(false);
     }
 
-    // Music toggle readout in the empty black slot of the title art (SELECT or tap it).
+    // Music toggle readout in the empty black slot of the title art (Tab / Back, or click it).
     FontRenderer::DrawString("Normal", MusicLabel(), 495.0f, 55.0f, { 0.3f, 1.0f, 0.3f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
@@ -763,7 +763,7 @@ void GameEngine::RenderMissionSelect() {
             }
         }
     }
-    FontRenderer::DrawString("Normal", "PRESS CROSS TO BEGIN", SCREEN_WIDTH * 0.5f, panelY + panelH - 24.0f,
+    FontRenderer::DrawString("Normal", "PRESS ENTER OR A TO BEGIN", SCREEN_WIDTH * 0.5f, panelY + panelH - 24.0f,
                              { 0.6f, 1.0f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
@@ -826,8 +826,8 @@ void GameEngine::RenderArmory() {
 void GameEngine::RenderPaused() {
     Renderer::DrawFillRect(0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT, { 0.0f, 0.0f, 0.0f, 0.65f });
     FontRenderer::DrawString("RubberStampLET42", "PAUSED", SCREEN_WIDTH * 0.5f, 210.0f, { 1.0f, 1.0f, 1.0f, 1.0f }, 1.0f, ALIGN_CENTER);
-    FontRenderer::DrawString("Normal", "START: RESUME    CIRCLE: RETIRE TO TITLE", SCREEN_WIDTH * 0.5f, 290.0f, { 0.85f, 0.85f, 0.85f, 1.0f }, 1.0f, ALIGN_CENTER);
-    std::string music = std::string(MusicLabel()) + "   (SELECT)";
+    FontRenderer::DrawString("Normal", "P / START: RESUME    BACKSPACE / B: QUIT TO TITLE", SCREEN_WIDTH * 0.5f, 290.0f, { 0.85f, 0.85f, 0.85f, 1.0f }, 1.0f, ALIGN_CENTER);
+    std::string music = std::string(MusicLabel()) + "   (TAB / BACK)";
     FontRenderer::DrawString("Normal", music, SCREEN_WIDTH * 0.5f, 335.0f, { 0.85f, 0.85f, 0.85f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
@@ -850,11 +850,7 @@ void GameEngine::RenderOptions() {
         FontRenderer::DrawString("Normal", rows[i], SCREEN_WIDTH * 0.5f, kOptRowY[i] + 10.0f,
                                  sel ? Color4f{ 1.0f, 1.0f, 1.0f, 1.0f } : Color4f{ 0.7f, 0.7f, 0.7f, 1.0f }, 1.0f, ALIGN_CENTER);
     }
-#ifdef __vita__
-    const char* hint = "CROSS: CHANGE    CIRCLE: BACK    OR TAP";
-#else
     const char* hint = "ENTER/CLICK: CHANGE    ESC: BACK";
-#endif
     FontRenderer::DrawString("Normal", hint, SCREEN_WIDTH * 0.5f, 400.0f, { 0.6f, 0.6f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
@@ -865,17 +861,12 @@ void GameEngine::RenderHelp() {
     static const Row kPad[] = {
         { "LEFT STICK / D-PAD", "MOVE" },
         { "RIGHT STICK",        "AIM (PUSH FAR = AUTO-FIRE)" },
-        { "CROSS (A) / R",      "FIRE" },
-        { "TRIANGLE (Y) / L",   "NUKE" },
+        { "A / RB",             "FIRE" },
+        { "Y / LB",             "NUKE" },
         { "START",              "PAUSE" },
-        { "SELECT",             "MUSIC ON/OFF" },
-        { "CROSS / CIRCLE",     "MENU: CONFIRM / BACK" },
+        { "BACK",               "MUSIC ON/OFF" },
+        { "A / B",              "MENU: CONFIRM / BACK" },
     };
-#ifdef __vita__
-    static const Row kTouch[] = {
-        { "TOUCH SCREEN",       "DRIVE + AIM + FIRE (STICKS WIN)" },
-    };
-#else
     static const Row kKeys[] = {
         { "A D / ARROWS",       "MOVE" },
         { "MOUSE",              "AIM;  LEFT CLICK / CTRL / J: FIRE" },
@@ -884,7 +875,6 @@ void GameEngine::RenderHelp() {
         { "TAB",                "MUSIC ON/OFF" },
         { "ENTER / ESC",        "MENU: CONFIRM / BACK" },
     };
-#endif
     const float lineH = 22.0f, colKeys = 40.0f, colWhat = 270.0f;
     float y = 88.0f;
     auto section = [&](const char* name) {
@@ -896,20 +886,12 @@ void GameEngine::RenderHelp() {
         FontRenderer::DrawString("Normal", r.what, colWhat, y, Color4f::White());
         y += lineH;
     };
-#ifndef __vita__
     section("KEYBOARD / MOUSE");
     for (const Row& r : kKeys) row(r);
     y += 8.0f;
-#endif
     section("GAMEPAD");
     for (const Row& r : kPad) row(r);
-#ifdef __vita__
-    y += 8.0f;
-    section("TOUCH");
-    for (const Row& r : kTouch) row(r);
-    // CROSS/CIRCLE confirm and back are only the Vita glyph names for SDL A/B.
-#endif
-    FontRenderer::DrawString("Normal", "ANY BUTTON OR TAP: BACK", SCREEN_WIDTH * 0.5f, 448.0f, { 0.6f, 0.6f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
+    FontRenderer::DrawString("Normal", "ANY BUTTON OR CLICK: BACK", SCREEN_WIDTH * 0.5f, 448.0f, { 0.6f, 0.6f, 0.6f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
 void GameEngine::RenderGameOver() {
@@ -931,7 +913,7 @@ void GameEngine::RenderGameOver() {
         FontRenderer::DrawString("Normal", scoreStr, SCREEN_WIDTH * 0.5f, 275.0f, { 1.0f, 1.0f, 1.0f, 1.0f }, 1.2f, ALIGN_CENTER);
     }
 
-    FontRenderer::DrawString("Computer", "PRESS CROSS TO RETURN TO HEADQUARTERS", SCREEN_WIDTH * 0.5f, 370.0f, { 1.0f, 0.9f, 0.2f, 1.0f }, 1.0f, ALIGN_CENTER);
+    FontRenderer::DrawString("Computer", "PRESS ENTER TO RETURN TO HEADQUARTERS", SCREEN_WIDTH * 0.5f, 370.0f, { 1.0f, 0.9f, 0.2f, 1.0f }, 1.0f, ALIGN_CENTER);
 }
 
 } // namespace HeavyWeapon

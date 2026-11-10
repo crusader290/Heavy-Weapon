@@ -17,7 +17,7 @@
 #include <unordered_map>
 #include <mutex>
 #include "core/Perf.h"
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 namespace HeavyWeapon {
 
@@ -114,22 +114,15 @@ void Vfs::Init(const std::string& customBasePath) {
     if (!customBasePath.empty()) {
         sSearchPaths.push_back(NormalizeSlashes(customBasePath));
     }
-#ifdef __vita__
-    sSearchPaths.push_back("ux0:data/heavyweapon/");
-    sSearchPaths.push_back("app0:");
-#endif
     sSearchPaths.push_back("Heavy Weapon Deluxe/");
     sSearchPaths.push_back("./");
-#ifndef __vita__
     // Next to the executable, so a double-clicked build finds data copied beside it
     // whatever the working directory is.
-    if (char* base = SDL_GetBasePath()) {
+    if (const char* base = SDL_GetBasePath()) {   // owned by SDL
         std::string exeDir = NormalizeSlashes(base);
-        SDL_free(base);
         sSearchPaths.push_back(exeDir + "Heavy Weapon Deluxe/");
         sSearchPaths.push_back(exeDir);
     }
-#endif
 #ifdef HW_DATA_DIR
     // Build-time default (CMake -DHW_DATA_DIR=...), searched last.
     sSearchPaths.push_back(NormalizeSlashes(HW_DATA_DIR));
@@ -143,9 +136,12 @@ static const std::string& ResolveMemo(const std::string& relativePath, const std
                                       bool& found, std::string& scratch) {
     scratch = relativePath;
     for (char& c : scratch) if (c == '\\') c = '/';
+    // Kept as given for the existing-path check below: on Linux a resolved path is absolute
+    // ("/data/Sounds/x.ogg") and must not lose its leading slash.
+    const std::string asGiven = scratch;
     if (!scratch.empty() && scratch[0] == '/') scratch.erase(0, 1);
 
-    const std::string key = ToLower(scratch);
+    const std::string key = ToLower(asGiven);
     std::lock_guard<std::mutex> lock(sVfsMutex);
     auto memo = sMemo.find(key);
     if (memo != sMemo.end()) {
@@ -167,7 +163,7 @@ static const std::string& ResolveMemo(const std::string& relativePath, const std
         }
     }
     // Already a full path that exists as given (callers pass Resolve() results to Exists()).
-    if (hit.empty() && access(scratch.c_str(), F_OK) == 0) hit = scratch;
+    if (hit.empty() && access(asGiven.c_str(), F_OK) == 0) hit = asGiven;
     auto ins = sMemo.emplace(key, hit).first;
     found = !hit.empty();
     return found ? ins->second : scratch;

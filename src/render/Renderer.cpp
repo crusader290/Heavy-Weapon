@@ -1,6 +1,6 @@
 #include "Renderer.h"
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
+#include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -10,7 +10,6 @@
 
 namespace HeavyWeapon {
 
-#ifndef __vita__
 // Framebuffer objects are core since GL 3.0 but not part of the GL 1.x ABI that
 // libGL exports, so resolve them at runtime on desktop.
 static PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers_ = nullptr;
@@ -33,7 +32,6 @@ static bool LoadFramebufferFunctions() {
     return glGenFramebuffers_ && glBindFramebuffer_ && glFramebufferTexture2D_ &&
            glCheckFramebufferStatus_ && glDeleteFramebuffers_;
 }
-#endif
 
 SDL_Window* Renderer::sWindow = nullptr;
 ScaleMode Renderer::sScaleMode = SCALE_ASPECT;
@@ -47,13 +45,7 @@ float Renderer::sShakeOffsetX = 0.0f;
 float Renderer::sShakeOffsetY = 0.0f;
 
 static void GetDrawableSize(SDL_Window* window, int& w, int& h) {
-#ifdef __vita__
-    (void)window;
-    w = DISPLAY_WIDTH;
-    h = DISPLAY_HEIGHT;
-#else
-    SDL_GL_GetDrawableSize(window, &w, &h);
-#endif
+    SDL_GetWindowSizeInPixels(window, &w, &h);
 }
 
 // Destination rectangle of the game frame on a display of the given size.
@@ -78,12 +70,10 @@ static void SetOrtho(float w, float h) {
 bool Renderer::Init(SDL_Window* window) {
     sWindow = window;
 
-#ifndef __vita__
     if (!LoadFramebufferFunctions()) {
         std::cerr << "[Renderer] OpenGL framebuffer objects are unavailable" << std::endl;
         return false;
     }
-#endif
 
     glGenTextures(1, &sFboTex);
     glBindTexture(GL_TEXTURE_2D, sFboTex);
@@ -168,11 +158,7 @@ void Renderer::EndFrame() {
     glDisableClientState(GL_TEXTURE_COORD_ARRAY);
     glEnable(GL_BLEND);
 
-#ifdef __vita__
-    vglSwapBuffers(GL_FALSE);
-#else
     SDL_GL_SwapWindow(sWindow);
-#endif
 }
 
 void Renderer::DisplayToLogical(float dx, float dy, float& outX, float& outY) {
@@ -183,28 +169,26 @@ void Renderer::DisplayToLogical(float dx, float dy, float& outX, float& outY) {
     outY = (dy - dst.y) * SCREEN_HEIGHT / dst.h;
 }
 
+void Renderer::NormalizedToLogical(float nx, float ny, float& outX, float& outY) {
+    int winW = 1, winH = 1;
+    SDL_GetWindowSize(sWindow, &winW, &winH);
+    WindowToLogical(nx * winW, ny * winH, outX, outY);
+}
+
 void Renderer::WindowToLogical(float wx, float wy, float& outX, float& outY) {
-#ifdef __vita__
-    DisplayToLogical(wx, wy, outX, outY);
-#else
     int winW = 1, winH = 1, dispW = 1, dispH = 1;
     SDL_GetWindowSize(sWindow, &winW, &winH);
-    SDL_GL_GetDrawableSize(sWindow, &dispW, &dispH);
+    SDL_GetWindowSizeInPixels(sWindow, &dispW, &dispH);
     DisplayToLogical(wx * dispW / winW, wy * dispH / winH, outX, outY);
-#endif
 }
 
 bool Renderer::SaveScreenshot(const std::string& path) {
-#ifdef __vita__
-    (void)path;
-    return false;
-#else
     std::vector<uint8_t> pixels(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
     glBindFramebuffer(GL_FRAMEBUFFER, sFbo);
     glReadPixels(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SCREEN_WIDTH, SCREEN_HEIGHT, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* surf = SDL_CreateSurface(SCREEN_WIDTH, SCREEN_HEIGHT, SDL_PIXELFORMAT_RGBA32);
     if (!surf) return false;
     const int pitch = SCREEN_WIDTH * 4;
     for (int y = 0; y < SCREEN_HEIGHT; ++y) {
@@ -212,10 +196,9 @@ bool Renderer::SaveScreenshot(const std::string& path) {
         std::memcpy(row, pixels.data() + (SCREEN_HEIGHT - 1 - y) * pitch, pitch);
         for (int x = 0; x < SCREEN_WIDTH; ++x) row[x * 4 + 3] = 255;
     }
-    bool ok = IMG_SavePNG(surf, path.c_str()) == 0;
-    SDL_FreeSurface(surf);
+    bool ok = IMG_SavePNG(surf, path.c_str());
+    SDL_DestroySurface(surf);
     return ok;
-#endif
 }
 
 void Renderer::SetAdditiveBlend(bool additive) {

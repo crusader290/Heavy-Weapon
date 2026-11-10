@@ -1,10 +1,10 @@
 # Heavy Weapon
 
-A source port of PopCap's arcade tank shooter **Heavy Weapon Deluxe** that runs natively on
-**Windows x64**, **PlayStation Vita**, and **Linux**, written in C++17 on SDL2 and OpenGL.
+A native source port of PopCap's arcade tank shooter **Heavy Weapon Deluxe** for
+**Windows x64** and **Linux x64**, written in C++17 on **SDL3** and OpenGL.
 
-All platforms share the same game code. The game renders at its original 640×480 into an
-offscreen target, then scales that frame to whatever window or screen it runs on.
+The game renders at its original 640×480 into an offscreen target, then scales that frame
+to the window, either at 4:3 with black bars or stretched to fill.
 
 | Title | Mission map |
 | :---: | :---: |
@@ -24,17 +24,18 @@ offscreen target, then scales that frame to whatever window or screen it runs on
 - **Survival mode:** endless waves from `survival0-9.xml` that step up every minute, with
   one tank, more frequent supply drops, and a saved best time.
 - **Original look:** 4-plane parallax, PopCap's split `.jpg` + `_.png` alpha masks, additive
-  effects and particles, shown at 4:3 (default) or stretched.
-- **Controls for each platform:** keyboard and mouse on PC, twin-stick on any gamepad, and
-  sticks plus touch on Vita.
-- **Audio:** sound effects and menu music through SDL2_mixer, with a music toggle.
+  effects and particles.
+- **Controls:** drive with A/D and aim with the mouse, or play twin-stick on any gamepad,
+  or use a touch screen.
+- **Audio:** sound effects and menu music through SDL3_mixer, with a music toggle.
 - **No load hitches:** every sprite and sound is preloaded at startup, behind a progress bar.
 
 ---
 
 ## Game data
 
-Copy these folders from your *Heavy Weapon Deluxe* install:
+Copy these folders from your *Heavy Weapon Deluxe* install, or point the game at the
+install folder with `--data`:
 
 ```
 data/      bosses.xml, craft.xml, credits.xml, levels.xml, waves.xml, survival0-9.xml
@@ -44,7 +45,16 @@ Music/     AtomicTank.mo3, LoveTheme.ogg
 Sounds/
 ```
 
-File names are matched case-insensitively, so the data works as shipped on every platform.
+File names are matched case-insensitively, so the data works unchanged on Linux.
+
+The game looks for data in this order and uses the first match:
+
+1. `--data <dir>`
+2. `Heavy Weapon Deluxe/`, then `./`, in the working directory
+3. `Heavy Weapon Deluxe/`, then the executable's own folder
+4. The folder baked in at configure time with `-DHW_DATA_DIR=<dir>`
+
+`settings.ini` (music on/off, best survival time) is saved in the working directory.
 
 ---
 
@@ -54,9 +64,9 @@ File names are matched case-insensitively, so the data works as shipped on every
 
 - **Visual Studio 2022** or the **Build Tools for Visual Studio 2022**, with the
   *Desktop development with C++* workload, which includes MSVC, CMake and Ninja.
-- An internet connection on the first build. SDL2 2.32.10, SDL2_image 2.8.12 and
-  SDL2_mixer 2.8.2 are downloaded from the official
-  [libsdl-org](https://github.com/libsdl-org) releases.
+- An internet connection on the first build. SDL3 3.4.20, SDL3_image 3.4.8 and
+  SDL3_mixer 3.2.4 are downloaded from the official [libsdl-org](https://github.com/libsdl-org)
+  release packages into the build folder.
 
 ### Build
 
@@ -65,7 +75,7 @@ tools\windows\build.cmd
 ```
 
 This finds Visual Studio, sets up the x64 compiler, and builds `build-windows\heavyweapon.exe`.
-It also copies the SDL DLLs next to the exe.
+It also copies the SDL3 DLLs next to the exe.
 
 To build in a default data folder so the exe can be run from anywhere:
 
@@ -86,88 +96,69 @@ cmake --build --preset windows-x64
 build-windows\heavyweapon.exe --data "C:\Games\Heavy Weapon Deluxe"
 ```
 
-The game looks for data in this order and uses the first match:
-
-1. `--data <dir>`
-2. `Heavy Weapon Deluxe\`, then `.\`, in the working directory
-3. `Heavy Weapon Deluxe\`, then the exe's own folder
-4. The folder passed to `build.cmd` (CMake `HW_DATA_DIR`)
-
 The exe is a windowed app. When it is started from a terminal, its log output goes to that
 terminal. If it can't start, for example because no data was found, it shows an error box.
-`settings.ini` is saved in the working directory.
-
-To ship a standalone copy, put `heavyweapon.exe`, every `.dll` from `build-windows\` and your
-game data folders in one directory.
+To ship a standalone copy, put `heavyweapon.exe` and every `.dll` from `build-windows\` in
+one folder, with the game data folders next to them.
 
 ---
 
-## PlayStation Vita
+## Linux x64
 
 ### Requirements
 
-- A Vita or PS TV on custom firmware (HENkaku / Ensō) with **VitaShell**.
-- `ur0:data/libshacccg.suprx`, the runtime shader compiler used by VitaGL. If you don't
-  have it yet, run [ShaRKBR33D](https://github.com/Rinnegatamante/ShaRKBR33D/releases) to
-  extract it from your own firmware.
-- kubridge and repatch are **not** needed, because this is a native build.
+A C++17 compiler, CMake 3.24 or newer, and OpenGL development files. For SDL3 you can use
+either option:
 
-### Install
+- **Distribution packages**, if they're new enough (SDL3 ≥ 3.2, SDL3_image ≥ 3.2,
+  SDL3_mixer ≥ 3.0). On Fedora 44:
+  ```bash
+  sudo dnf install gcc-c++ cmake SDL3-devel SDL3_image-devel SDL3_mixer-devel mesa-libGL-devel
+  ```
+- **Bundled.** If those packages are missing (for example on Ubuntu 24.04), CMake
+  downloads the SDL3 release sources and builds them as static libraries. Force this with
+  `-DHW_BUNDLE_SDL=ON`. SDL3 then needs its usual X11/Wayland/audio development packages.
+  On Debian or Ubuntu:
+  ```bash
+  sudo apt install build-essential cmake ninja-build pkg-config libgl-dev libegl-dev \
+      libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev \
+      libxtst-dev libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev \
+      libpulse-dev libasound2-dev
+  ```
 
-1. Install `HeavyWeaponDeluxe.vpk` with VitaShell.
-2. Copy the game data folders to `ux0:data/heavyweapon/`.
-3. Launch **Heavy Weapon Deluxe** from LiveArea.
-
-### Build
-
-Needs [VitaSDK](https://vitasdk.org) with vitaGL, SDL2, SDL2_image, SDL2_mixer and tinyxml2:
-
-```bash
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake
-cmake --build build          # -> build/HeavyWeaponDeluxe.vpk
-```
-
-Or with Podman alone, which runs the official VitaSDK container:
+### Build and run
 
 ```bash
-tools/desktop/hw.sh vpk
+cmake --preset linux-x64
+cmake --build --preset linux-x64
+./build-linux/heavyweapon --data "/path/to/Heavy Weapon Deluxe"
 ```
 
----
+### Container helper
 
-## Linux
-
-The Linux build is mostly used for development, quick iteration and automated screenshots.
-It needs SDL2, SDL2_image, SDL2_mixer and OpenGL development packages:
-
-```bash
-cmake -S . -B build-desktop -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build-desktop
-./build-desktop/heavyweapon --data "/path/to/Heavy Weapon Deluxe"
-```
-
-`tools/desktop/hw.sh` wraps the same build in a Fedora container:
+`tools/linux/hw.sh` builds and runs the game inside a Fedora container, so the host only
+needs Podman or Docker. It expects the game data in `Heavy Weapon Deluxe/` at the repo root.
 
 | Command | Does |
 | :--- | :--- |
-| `tools/desktop/hw.sh image` | Builds the container image (once) |
-| `tools/desktop/hw.sh build` | Compiles into `build-desktop/` |
-| `tools/desktop/hw.sh run` | Plays in a window, with sound |
-| `tools/desktop/hw.sh shot out.png --state play --level 2` | Renders a frame headlessly |
+| `tools/linux/hw.sh image` | Builds the container image (once) |
+| `tools/linux/hw.sh build` | Compiles into `build-linux/` |
+| `tools/linux/hw.sh run` | Plays in a window, with sound |
+| `tools/linux/hw.sh shot out.png --state play --level 2` | Renders a frame headlessly |
 
 ---
 
 ## Controls
 
-| Action | Keyboard / mouse | Gamepad | Vita |
+| Action | Keyboard / mouse | Gamepad | Touch screen |
 | :--- | :--- | :--- | :--- |
-| Drive | A / D, ← / → | Left stick, D-pad | Left stick, D-pad |
-| Aim | Mouse | Right stick | Right stick, touch |
-| Fire | Left click, Ctrl, J | A, R1, right stick pushed far | ✕, R1, right stick pushed far |
-| Nuke | Right click, X, N | Y, L1 | △, L1 |
-| Pause | P, Esc | Start | Start |
-| Music on / off | Tab | Back | Select |
-| Menu confirm / back | Enter, Space / Esc, Backspace | A / B | ✕ / ○, tap |
+| Drive left / right | **A / D** (or ← / →) | Left stick, D-pad | Hold where the tank should go |
+| Aim | Mouse | Right stick | Finger |
+| Fire | Left click, Ctrl, J | A, RB, right stick pushed far | Finger down |
+| Nuke | Right click, X, N | Y, LB | — |
+| Pause | P, Esc | Start | — |
+| Music on / off | Tab | Back | — |
+| Menu confirm / back | Enter, Space / Esc, Backspace | A / B | Tap |
 
 ---
 
@@ -194,17 +185,13 @@ Example: `heavyweapon --state play --level 4 --frames 600 --screenshot level5.pn
 src/core/       game loop, state machine, menus, optional profiler (HW_PERF)
 src/game/       board, player tank, enemies, bosses, weapons, supplies, effects
 src/render/     GL renderer, textures and alpha masks, bitmap fonts, parallax
-src/platform/   case-insensitive file lookup, audio, input
+src/platform/   case-insensitive file lookup, audio (SDL3_mixer), input
 src/loader/     XML data loading
 include/        headers
 3rdparty/       tinyxml2
 tools/windows/  Windows build script
-tools/desktop/  Linux / Vita container scripts
-sce_sys/        Vita LiveArea assets
+tools/linux/    Linux container build / run / screenshot script
 ```
-
-CMake picks the platform automatically. It uses Windows with MSVC when built on Windows,
-the Vita when `VITASDK` is set, and Linux otherwise.
 
 ---
 
@@ -220,8 +207,8 @@ the Vita when `VITASDK` is set, and Linux otherwise.
 ## Credits & legal
 
 - Based on the PS Vita port by
-  [Chillaxhson](https://github.com/Chillaxhson/heavy-weapon-deluxe-vita). The Windows x64
-  target was added in this repository.
+  [Chillaxhson](https://github.com/Chillaxhson/heavy-weapon-deluxe-vita). This repository
+  turned it into a Windows/Linux desktop port on SDL3.
 - *Heavy Weapon Deluxe* is © 2005 PopCap Games, Inc. / Electronic Arts. This project is
   not affiliated with or endorsed by them.
 - This repository contains no copyrighted game assets, music, or binaries. It is a fan

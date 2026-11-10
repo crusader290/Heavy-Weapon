@@ -4,9 +4,13 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <SDL2/SDL_mixer.h>
-#include <SDL2/SDL_mutex.h>
-#include <SDL2/SDL_thread.h>
+#include <SDL3/SDL_mutex.h>
+#include <SDL3/SDL_thread.h>
+
+// SDL3_mixer handles; the mixer header stays out of every includer.
+struct MIX_Mixer;
+struct MIX_Audio;
+struct MIX_Track;
 
 namespace HeavyWeapon {
 
@@ -149,9 +153,14 @@ public:
     static void SetSfxVolume(int volume);   // 0 to 128
 
 private:
-    static std::unordered_map<std::string, Mix_Chunk*> sSounds;
+    // SDL2_mixer-style channel pool: one-shot and looping sounds each take a free track.
+    static constexpr int kNumTracks = 32;
+    static MIX_Mixer* sMixer;
+    static MIX_Track* sTracks[kNumTracks];
+    static MIX_Track* sMusicTrack;
+    static std::unordered_map<std::string, MIX_Audio*> sSounds;
     static std::unordered_set<std::string> sMissingSounds;
-    static Mix_Music* sCurrentMusic;
+    static MIX_Audio* sCurrentMusic;
     static int sMusicVolume;
     static bool sMusicEnabled;
     static std::string sMusicRequest;
@@ -161,9 +170,14 @@ private:
     static int sCooldown[SND_COUNT];
     static int sLoopChannel[SND_COUNT];
 
-    // Looks up a loaded chunk (lazy-loading it), thread-safe against the preload worker.
-    static Mix_Chunk* GetChunk(const std::string& name);
-    static SDL_mutex* sSoundMutex;
+    // Looks up a loaded sound (lazy-loading it), thread-safe against the preload worker.
+    static MIX_Audio* GetChunk(const std::string& name);
+    // Starts audio on a free track with a linear gain, pan and loop count (-1 = forever).
+    // Returns the track index, or -1 when none is free.
+    static int PlayOnFreeTrack(MIX_Audio* audio, float gain, int pan, int loops);
+    static bool TrackBusy(int track);
+    static void HaltTrack(int track);
+    static SDL_Mutex* sSoundMutex;
     static SDL_Thread* sPreloadThread;
     static volatile int sPreloadDone;
     static volatile int sPreloadRunning;

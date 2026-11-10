@@ -1,8 +1,8 @@
 #include "TextureManager.h"
 #include "Vfs.h"
 #include "core/Perf.h"
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
+#include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -204,12 +204,11 @@ static std::string NormalizeKey(const std::string& path) {
 std::unordered_map<std::string, Texture> TextureManager::sTextures;
 
 void TextureManager::Init() {
-    IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
+    // SDL3_image needs no initialisation.
 }
 
 void TextureManager::Shutdown() {
     Clear();
-    IMG_Quit();
 }
 
 void TextureManager::GetCelInfo(const std::string& name, int& outCols, int& outRows) {
@@ -232,12 +231,12 @@ Texture TextureManager::LoadFromFiles(const std::string& colorPath, const std::s
 
     SDL_Surface* srcSurface = IMG_Load(colorPath.c_str());
     if (!srcSurface) {
-        std::cerr << "[TextureManager] Failed to load image: " << colorPath << " (" << IMG_GetError() << ")" << std::endl;
+        std::cerr << "[TextureManager] Failed to load image: " << colorPath << " (" << SDL_GetError() << ")" << std::endl;
         return tex;
     }
 
-    SDL_Surface* rgbaSurface = SDL_ConvertSurfaceFormat(srcSurface, SDL_PIXELFORMAT_RGBA32, 0);
-    SDL_FreeSurface(srcSurface);
+    SDL_Surface* rgbaSurface = SDL_ConvertSurface(srcSurface, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(srcSurface);
     if (!rgbaSurface) {
         return tex;
     }
@@ -264,8 +263,8 @@ Texture TextureManager::LoadFromFiles(const std::string& colorPath, const std::s
         std::string resolvedMask = Vfs::Resolve(mask);
         SDL_Surface* maskSurface = IMG_Load(resolvedMask.c_str());
         if (maskSurface) {
-            SDL_Surface* maskRgba = SDL_ConvertSurfaceFormat(maskSurface, SDL_PIXELFORMAT_RGBA32, 0);
-            SDL_FreeSurface(maskSurface);
+            SDL_Surface* maskRgba = SDL_ConvertSurface(maskSurface, SDL_PIXELFORMAT_RGBA32);
+            SDL_DestroySurface(maskSurface);
 
             if (maskRgba) {
                 uint32_t* colorPixels = static_cast<uint32_t*>(rgbaSurface->pixels);
@@ -276,7 +275,7 @@ Texture TextureManager::LoadFromFiles(const std::string& colorPath, const std::s
                     uint8_t alpha = maskPixels[i] & 0xFF; // red channel as alpha
                     colorPixels[i] = (colorPixels[i] & 0x00FFFFFF) | (static_cast<uint32_t>(alpha) << 24);
                 }
-                SDL_FreeSurface(maskRgba);
+                SDL_DestroySurface(maskRgba);
                 tex.hasAlpha = true;
             }
         }
@@ -300,7 +299,7 @@ Texture TextureManager::LoadFromFiles(const std::string& colorPath, const std::s
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaSurface->pixels);
 
-    SDL_FreeSurface(rgbaSurface);
+    SDL_DestroySurface(rgbaSurface);
     return tex;
 }
 

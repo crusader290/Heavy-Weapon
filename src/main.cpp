@@ -1,9 +1,6 @@
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include "GLPlatform.h"
-#ifdef __vita__
-#include <psp2/power.h>
-#include <psp2/kernel/processmgr.h>
-#endif
 #include "Constants.h"
 #include "GameEngine.h"
 #include <cstdlib>
@@ -22,6 +19,9 @@
 // The Windows build is a GUI-subsystem app (no console window when double-clicked).
 // When started from a terminal, write stdout/stderr there instead.
 static void AttachParentConsole() {
+    // Keep stdout/stderr that were redirected to a file or pipe.
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out != nullptr && out != INVALID_HANDLE_VALUE) return;
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
         FILE* f = nullptr;
         freopen_s(&f, "CONOUT$", "w", stdout);
@@ -78,20 +78,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-#ifdef __vita__
-    // Maximize PS Vita CPU and GPU clock frequencies for stable 60 FPS
-    scePowerSetArmClockFrequency(444);
-    scePowerSetBusClockFrequency(222);
-    scePowerSetGpuClockFrequency(222);
-    scePowerSetGpuXbarClockFrequency(166);
-#endif
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
-        std::cerr << "Failed to initialize SDL2: " << SDL_GetError() << std::endl;
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+        std::cerr << "Failed to initialize SDL: " << SDL_GetError() << std::endl;
         return 1;
     }
     // Audio is optional: the game still runs (silently) without it.
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         std::cerr << "Audio unavailable: " << SDL_GetError() << std::endl;
     }
 
@@ -99,21 +92,11 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
-#ifdef __vita__
-    int winW = HeavyWeapon::DISPLAY_WIDTH;
-    int winH = HeavyWeapon::DISPLAY_HEIGHT;
-    Uint32 winFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
-#else
     int winW = HeavyWeapon::SCREEN_WIDTH * windowScale;
     int winH = HeavyWeapon::SCREEN_HEIGHT * windowScale;
-    Uint32 winFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-#endif
+    SDL_WindowFlags winFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
-    SDL_Window* window = SDL_CreateWindow(
-        "Heavy Weapon Deluxe",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        winW, winH, winFlags
-    );
+    SDL_Window* window = SDL_CreateWindow("Heavy Weapon Deluxe", winW, winH, winFlags);
 
     if (!window) {
         std::cerr << "Failed to create SDL window: " << SDL_GetError() << std::endl;
@@ -138,22 +121,17 @@ int main(int argc, char* argv[]) {
             engine.Run();
         } else {
             exitCode = 1;
-#ifndef __vita__
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Heavy Weapon Deluxe",
                 "Failed to start. Check that the game data (data/, Images/, Sounds/, Fonts/, Music/) "
                 "is next to the executable, in \"Heavy Weapon Deluxe/\", or passed with --data <dir>.",
                 window);
-#endif
         }
         engine.Shutdown();
     }
 
-    SDL_GL_DeleteContext(glContext);
+    SDL_GL_DestroyContext(glContext);
     SDL_DestroyWindow(window);
     SDL_Quit();
 
-#ifdef __vita__
-    sceKernelExitProcess(0);
-#endif
     return exitCode;
 }
